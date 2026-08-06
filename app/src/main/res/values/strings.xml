@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">RedTerm</string>
+    <string name="notification_channel_terminal">Terminal Sessions</string>
+    <string name="install">Install</string>
+    <string name="settings">Settings</string>
+    <string name="new_session">New Session</string>
+    <string name="proot_extraction_failed">Proot extraction failed — reinstall app</string>
+</resources>
