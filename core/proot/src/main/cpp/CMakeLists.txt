@@ -186,6 +186,7 @@ set(PROOT_SOURCES
     syscall/socket.c
     syscall/heap.c
     syscall/rlimit.c
+    syscall/pipe_shadow.c
     tracee/tracee.c
     tracee/mem.c
     tracee/reg.c

@@ -8,12 +8,12 @@ for the complete terms.
 
 | Component | Purpose | License | Source |
 | --- | --- | --- | --- |
-| proot | Userspace root emulation for running distros | GPL-2.0-or-later | https://github.com/proot-me/proot |
+| proot | Userspace root emulation for running distros | GPL-2.0-or-later | https://github.com/termux/proot (v5.1.107.89) |
 | talloc | Memory pool used by proot | LGPL-3.0-or-later | https://github.com/talloc-project/talloc |
 | libfakeuid | uid spoofing for proot | GPL-2.0-or-later (derived from proot) | bundled with proot |
 
 Binaries are cross-compiled for `arm64-v8a` and `armeabi-v7a` via
-`native/build-proot.sh`.
+`core/proot/src/main/cpp/CMakeLists.txt` (CMake + Android NDK).
 
 ## Java / Kotlin libraries
 
@@ -43,6 +43,6 @@ Binaries are cross-compiled for `arm64-v8a` and `armeabi-v7a` via
 
 The proot binary is licensed under the GPL. RedTerm ships proot as a
 separate binary executed by the app, and the source of the exact binaries
-used is available in this repository (`native/`) and upstream at the
+used is available in this repository (`core/proot/src/main/cpp/`) and upstream at the
 sources above. If you believe any component above is listed incorrectly,
 please open an issue.
