@@ -34,9 +34,6 @@ import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import android.widget.Scroller;
 
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-
 import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 
@@ -59,18 +56,6 @@ public final class TerminalView extends View {
     public TerminalRenderer mRenderer;
 
     public TerminalViewClient mClient;
-
-    /**
-     * Single-thread executor used to offload bulk text input (e.g. IME paste) from the UI thread.
-     * Each {@code inputCodePoint} call performs a synchronized, potentially blocking write to the
-     * 4 KB {@code ByteQueue}; running the per-character loop here keeps the UI responsive when a
-     * large block of text is pasted. A single thread preserves the ordering of input writes.
-     */
-    private final ExecutorService mInputWriteExecutor = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "terminal-input-writer");
-        t.setDaemon(true);
-        return t;
-    });
 
     private TextSelectionCursorController mTextSelectionCursorController;
 
@@ -354,8 +339,9 @@ public final class TerminalView extends View {
                 if (TERMINAL_VIEW_KEY_LOGGING_ENABLED) mClient.logInfo(LOG_TAG, "IME: finishComposingText()");
                 super.finishComposingText();
 
-                sendTextToTerminal(getEditable());
-                getEditable().clear();
+                Editable content = getEditable();
+                sendBulkOrPerChar(content);
+                content.clear();
                 return true;
             }
 
@@ -369,7 +355,7 @@ public final class TerminalView extends View {
                 if (mEmulator == null) return true;
 
                 Editable content = getEditable();
-                sendTextToTerminal(content);
+                sendBulkOrPerChar(content);
                 content.clear();
                 return true;
             }
@@ -385,70 +371,75 @@ public final class TerminalView extends View {
                 return super.deleteSurroundingText(leftLength, rightLength);
             }
 
+            // Route large/multi-line IME input (i.e. a paste) through TerminalEmulator.paste(), which
+            // strips dangerous control chars, normalizes newlines to \r, wraps the text in bracketed-
+            // paste markers (DECSET 2004) so the shell inserts it as one block, and writes it in a
+            // single bulk write. Otherwise fall back to the per-character path which handles ctrl/
+            // shift/penti key mapping for normal typing.
+            void sendBulkOrPerChar(CharSequence text) {
+                stopTextSelectionMode();
+                final String s = text.toString();
+                if (mEmulator != null && (s.length() > 64 || s.indexOf('\n') >= 0 || s.indexOf('\r') >= 0)) {
+                    mEmulator.paste(s);
+                    return;
+                }
+                sendTextToTerminal(text);
+            }
+
             void sendTextToTerminal(CharSequence text) {
                 stopTextSelectionMode();
-                if (mEmulator == null) return;
-                // Snapshot to an immutable String: the caller clears the Editable right after this
-                // returns, so the background loop must not retain a reference to it.
-                final String snapshot = text.toString();
-                final int textLengthInChars = snapshot.length();
-                if (textLengthInChars == 0) return;
-                // Offload the per-character writes from the UI thread. Each inputCodePoint() ends in
-                // a synchronized, potentially blocking ByteQueue.write() against a 4 KB queue; doing
-                // this on the UI thread for a large paste freezes the app.
-                mInputWriteExecutor.execute(() -> {
-                    for (int i = 0; i < textLengthInChars; i++) {
-                        char firstChar = snapshot.charAt(i);
-                        int codePoint;
-                        if (Character.isHighSurrogate(firstChar)) {
-                            if (++i < textLengthInChars) {
-                                codePoint = Character.toCodePoint(firstChar, snapshot.charAt(i));
-                            } else {
-                                // At end of string, with no low surrogate following the high:
-                                codePoint = TerminalEmulator.UNICODE_REPLACEMENT_CHAR;
-                            }
+                final int textLengthInChars = text.length();
+                for (int i = 0; i < textLengthInChars; i++) {
+                    char firstChar = text.charAt(i);
+                    int codePoint;
+                    if (Character.isHighSurrogate(firstChar)) {
+                        if (++i < textLengthInChars) {
+                            codePoint = Character.toCodePoint(firstChar, text.charAt(i));
                         } else {
-                            codePoint = firstChar;
+                            // At end of string, with no low surrogate following the high:
+                            codePoint = TerminalEmulator.UNICODE_REPLACEMENT_CHAR;
                         }
-
-                        // Check onKeyDown() for details.
-                        if (mClient.readShiftKey())
-                            codePoint = Character.toUpperCase(codePoint);
-
-                        boolean ctrlHeld = false;
-                        if (codePoint <= 31 && codePoint != 27) {
-                            if (codePoint == '\n') {
-                                // The AOSP keyboard and descendants seems to send \n as text when the enter key is pressed,
-                                // instead of a key event like most other keyboard apps. A terminal expects \r for the enter
-                                // key (although when icrnl is enabled this doesn't make a difference - run 'stty -icrnl' to
-                                // check the behaviour).
-                                codePoint = '\r';
-                            }
-
-                            // E.g. penti keyboard for ctrl input.
-                            ctrlHeld = true;
-                            switch (codePoint) {
-                                case 31:
-                                    codePoint = '_';
-                                    break;
-                                case 30:
-                                    codePoint = '^';
-                                    break;
-                                case 29:
-                                    codePoint = ']';
-                                    break;
-                                case 28:
-                                    codePoint = '\\';
-                                    break;
-                                default:
-                                    codePoint += 96;
-                                    break;
-                            }
-                        }
-
-                        inputCodePoint(codePoint, ctrlHeld, false);
+                    } else {
+                        codePoint = firstChar;
                     }
-                });
+
+                    // Check onKeyDown() for details.
+                    if (mClient.readShiftKey())
+                        codePoint = Character.toUpperCase(codePoint);
+
+                    boolean ctrlHeld = false;
+                    if (codePoint <= 31 && codePoint != 27) {
+                        if (codePoint == '\n') {
+                            // The AOSP keyboard and descendants seems to send \n as text when the enter key is pressed,
+                            // instead of a key event like most other keyboard apps. A terminal expects \r for the enter
+                            // key (although when icrnl is enabled this doesn't make a difference - run 'stty -icrnl' to
+                            // check the behaviour).
+                            codePoint = '\r';
+                        }
+
+                        // E.g. penti keyboard for ctrl input.
+                        ctrlHeld = true;
+                        switch (codePoint) {
+                            case 31:
+                                codePoint = '_';
+                                break;
+                            case 30:
+                                codePoint = '^';
+                                break;
+                            case 29:
+                                codePoint = ']';
+                                break;
+                            case 28:
+                                codePoint = '\\';
+                                break;
+                            default:
+                                codePoint += 96;
+                                break;
+                        }
+                    }
+
+                    inputCodePoint(codePoint, ctrlHeld, false);
+                }
             }
 
         };

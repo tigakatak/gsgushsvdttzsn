@@ -881,9 +881,7 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
     private fun pasteClipboard() {
         val clip = getSystemService(android.content.ClipboardManager::class.java)
         val text = clip.primaryClip?.getItemAt(0)?.text?.toString() ?: return
-        val s = session
-        val backend = terminalBackend
-        if (backend != null && s != null) backend.writeInput(s, text) else s?.write(text)
+        terminalView.mEmulator?.paste(text)
     }
 
     private fun showError(msg: String) {
@@ -1295,9 +1293,7 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
             if (names.isNotEmpty() && which < contents.size) {
                 val content = contents[which]
                 val session = terminalView.mTermSession ?: return@setItems
-                val backend = terminalBackend
-                if (backend != null) backend.writeInput(session, content)
-                else session.write(content.toByteArray(), 0, content.length)
+                session.write(content.toByteArray(), 0, content.length)
             }
         }
         builder.setPositiveButton("+ Add") { _, _ -> showAddSnippetDialog() }
