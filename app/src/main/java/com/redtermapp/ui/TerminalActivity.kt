@@ -136,13 +136,6 @@ class TerminalActivity : AppCompatActivity() {
             .edit().putString("last_distro", distroName).apply()
         terminalView = findViewById(R.id.terminal_view)
         drawerLayout = findViewById(R.id.drawer_layout)
-        drawerLayout.addDrawerListener(object : androidx.drawerlayout.widget.DrawerLayout.SimpleDrawerListener() {
-            override fun onDrawerStateChanged(newState: Int) {
-                if (newState != androidx.drawerlayout.widget.DrawerLayout.STATE_IDLE) {
-                    hideKeyboard()
-                }
-            }
-        })
         sessionListContainer = findViewById(R.id.session_list_container)
 
         registerForContextMenu(terminalView)
@@ -167,18 +160,6 @@ class TerminalActivity : AppCompatActivity() {
 
         findViewById<TextView>(R.id.new_session_button).setOnClickListener {
             createNewSession()
-        }
-
-        findViewById<TextView>(R.id.export_btn).setOnClickListener {
-            exportCurrentOutput()
-        }
-
-        findViewById<TextView>(R.id.copy_selected_btn).setOnClickListener {
-            copySelectedText()
-        }
-
-        findViewById<TextView>(R.id.paste_btn).setOnClickListener {
-            pasteClipboard()
         }
 
         androidx.core.content.ContextCompat.registerReceiver(
@@ -298,8 +279,8 @@ class TerminalActivity : AppCompatActivity() {
 
     private fun keyAction(label: String): () -> Unit {
         val actions: List<Pair<String, () -> Unit>> = listOf(
-            "\u2630" to { drawerLayout.openDrawer(Gravity.START) },
-            "MENU" to { drawerLayout.openDrawer(Gravity.START) },
+            "\u2630" to { toggleSessionsPanel() },
+            "MENU" to { toggleSessionsPanel() },
             "ESC" to { focusedSession()?.writeCodePoint(false, 27); Unit },
             "TAB" to { focusedSession()?.writeCodePoint(false, 9); Unit },
             "CTRL" to { toggleCtrl() },
@@ -402,6 +383,15 @@ class TerminalActivity : AppCompatActivity() {
         val imm = getSystemService(InputMethodManager::class.java) ?: return
         val token = currentFocus?.windowToken ?: window.decorView.windowToken
         imm.hideSoftInputFromWindow(token, 0)
+    }
+
+    private fun toggleSessionsPanel() {
+        val panel = findViewById<LinearLayout>(R.id.sessions_panel)
+        panel.visibility = if (panel.visibility == android.view.View.VISIBLE) android.view.View.GONE else android.view.View.VISIBLE
+    }
+
+    private fun hideSessionsPanel() {
+        findViewById<LinearLayout>(R.id.sessions_panel).visibility = android.view.View.GONE
     }
 
     private fun toggleExtraKeys(show: Boolean) {
@@ -774,7 +764,7 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
                 setCardBackgroundColor(bgColor)
                 radius = 10f
                 cardElevation = 0f
-                setOnClickListener { switchToSession(i); drawerLayout.closeDrawers() }
+                setOnClickListener { switchToSession(i); hideSessionsPanel() }
                 addView(LinearLayout(context).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
@@ -837,7 +827,7 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
 
     private fun exportCurrentOutput() {
         val s = session ?: return
-        drawerLayout.closeDrawers()
+        hideSessionsPanel()
         Thread {
             try {
                 val text = s.emulator.getScreen().getTranscriptText()
@@ -999,8 +989,9 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
 
     override fun onCreateContextMenu(menu: ContextMenu, v: View, menuInfo: ContextMenu.ContextMenuInfo?) {
         super.onCreateContextMenu(menu, v, menuInfo)
-        menu.add(0, 1, 0, "Sessions")
-        menu.add(0, 2, 0, "New Session")
+        menu.add(0, 12, 0, "Copy")
+        menu.add(0, 13, 0, "Paste")
+        menu.add(0, 14, 0, "Export")
         menu.add(0, 3, 0, "Font +")
         menu.add(0, 4, 0, "Font -")
         menu.add(0, 5, 0, "Reset")
@@ -1177,8 +1168,9 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
     override fun onContextItemSelected(item: MenuItem): Boolean {
         val prefs = getSharedPreferences("settings", android.content.Context.MODE_PRIVATE)
         return when (item.itemId) {
-            1 -> { drawerLayout.openDrawer(Gravity.START); true }
-            2 -> { createNewSession(); true }
+            12 -> { copySelectedText(); true }
+            13 -> { pasteClipboard(); true }
+            14 -> { exportCurrentOutput(); true }
             3 -> { currentFontSize = (currentFontSize + 2).coerceAtMost(36); terminalView.setTextSize(currentFontSize); true }
             4 -> { currentFontSize = (currentFontSize - 2).coerceAtLeast(8); terminalView.setTextSize(currentFontSize); true }
              5 -> { resetTerminalDefaults(prefs); true }
