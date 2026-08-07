@@ -33,10 +33,6 @@ object Format {
         sizeCache.remove(dir.absolutePath)
     }
 
-    fun invalidateAll() {
-        sizeCache.clear()
-    }
-
     fun dirSizeAsync(dir: File, onResult: (Long) -> Unit) {
         cachedSize(dir)?.let { onResult(it); return }
         executor.execute {

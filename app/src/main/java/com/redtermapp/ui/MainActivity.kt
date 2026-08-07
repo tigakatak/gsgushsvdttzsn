@@ -12,7 +12,6 @@ import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.card.MaterialCardView
 import com.redtermapp.R
 import com.redtermapp.distro.DistroInstaller
-import com.redtermapp.util.Format
 
 class MainActivity : AppCompatActivity() {
 
@@ -84,15 +83,7 @@ class MainActivity : AppCompatActivity() {
 
         for (name in installed) {
             val rootfsDir = installer.getRootfsDir(name)
-            val cached = Format.cachedSize(rootfsDir)
-            val sizeLabel = TextView(this).apply {
-                text = if (cached != null) Format.size(cached) else ""
-                setTextColor(mutedTextColor())
-                textSize = 12f
-            }
-            if (cached == null) {
-                Format.dirSizeAsync(rootfsDir) { bytes -> sizeLabel.text = Format.size(bytes) }
-            }
+            val sizeLabel = DistroUi.buildDistroSizeLabel(this, rootfsDir, 12f)
             val card = MaterialCardView(this).apply {
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
@@ -213,12 +204,7 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, "Backing up $name...", Toast.LENGTH_SHORT).show()
         Thread {
             try {
-                var dir = java.io.File(
-                    android.os.Environment.getExternalStorageDirectory(), "RedTerm"
-                )
-                dir.mkdirs()
-                if (!dir.exists()) dir = java.io.File(getExternalFilesDir(null), "backups").apply { mkdirs() }
-                val outDir = dir
+                val outDir = DistroUi.backupDir(this)
                 val ok = installer.backup(name, outDir)
                 runOnUiThread {
                     if (ok) {
@@ -242,10 +228,8 @@ class MainActivity : AppCompatActivity() {
             .setTitle("Remove $name?")
             .setMessage("This will delete the rootfs, cached files and all data for $name, and kill any running session for it.")
             .setPositiveButton("Delete") { _, _ ->
-                com.redtermapp.ui.TerminalViewModel.get(application).removeSessionsForDistro(name)
-                installer.uninstall(name)
+                DistroUi.deleteDistro(this, installer, name)
                 populateDistroList()
-                RedTermWidgetProvider.updateAll(this)
                 Toast.makeText(this, "$name removed", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("Cancel", null)

@@ -16,8 +16,10 @@ import com.redtermapp.distro.Distro
 import com.redtermapp.distro.DistroInstaller
 import com.redtermapp.distro.DistroRegistry
 import com.redtermapp.proot.ProotInstaller
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class WelcomeActivity : AppCompatActivity() {
 
@@ -75,13 +77,13 @@ class WelcomeActivity : AppCompatActivity() {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
 
-        if (!ProotInstaller.isInstalled(this)) {
-            lifecycleScope.launch {
-                val ok = ProotInstaller.isInstalled(this@WelcomeActivity)
-                if (!ok) {
-                    installButton.isEnabled = false
-                    installButton.text = getString(R.string.proot_extraction_failed)
-                }
+        lifecycleScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                ProotInstaller.isInstalled(this@WelcomeActivity)
+            }
+            if (!ok) {
+                installButton.isEnabled = false
+                installButton.text = getString(R.string.proot_extraction_failed)
             }
         }
 
@@ -206,7 +208,7 @@ class WelcomeActivity : AppCompatActivity() {
             .setTitle(distro.displayName)
             .setMessage("Delete this distro?")
             .setPositiveButton("Delete") { _, _ ->
-                installer.uninstall(distro.name)
+                DistroUi.deleteDistro(this, installer, distro.name)
                 refreshDistroStates()
                 selectedCard?.setCardBackgroundColor(themeColor(R.attr.extraKeysBg, 0xFF181825.toInt()))
                 selectedCard?.strokeWidth = 0
@@ -313,6 +315,11 @@ class WelcomeActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        val selectOnly = intent?.getBooleanExtra(EXTRA_SELECT_ONLY, false) ?: false
+        if (!selectOnly && !isInstalling && hasInstalledDistro()) {
+            navigateToMain()
+            return
+        }
         refreshDistroStates()
     }
 

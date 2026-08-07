@@ -10,14 +10,11 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.os.Process
 import android.util.Log
-import android.view.ContextThemeWrapper
 import androidx.core.app.NotificationCompat
 import com.redtermapp.R
 import com.redtermapp.RedTermApp
 import com.redtermapp.ui.AppTheme
-import com.redtermapp.ui.NightModeReceiver
 import com.redtermapp.ui.TerminalActivity
-import com.redtermapp.ui.themeColor
 import java.io.File
 
 class TerminalService : Service() {
@@ -185,14 +182,14 @@ class TerminalService : Service() {
     }
 
     private fun getDistroName(): String {
+        val prefs = getSharedPreferences("settings", Context.MODE_PRIVATE)
+        prefs.getString("last_distro", null)?.let { return it.replaceFirstChar { c -> c.uppercase() } }
         val dir = File(filesDir, "installed")
-        return if (dir.exists()) dir.list()?.firstOrNull()?.replaceFirstChar { it.uppercase() } ?: "Terminal" else "Terminal"
+        return dir.list()?.sorted()?.firstOrNull()?.replaceFirstChar { it.uppercase() } ?: "Terminal"
     }
 
     private fun themeAccent(): Int {
         val prefs = getSharedPreferences("settings", Context.MODE_PRIVATE)
-        val themeName = NightModeReceiver.effectiveTheme(prefs)
-        val wrapped = ContextThemeWrapper(this, AppTheme.themeRes(themeName))
-        return wrapped.themeColor(R.attr.themeAccent, 0xFF89B4FA.toInt())
+        return AppTheme.resolveThemeColor(this, prefs, R.attr.themeAccent, 0xFF89B4FA.toInt())
     }
 }

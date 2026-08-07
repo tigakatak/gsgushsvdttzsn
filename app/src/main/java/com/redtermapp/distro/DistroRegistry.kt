@@ -80,7 +80,7 @@ object DistroRegistry {
             description = "Penetration testing and security research.",
             baseUrl = "https://kali.download/nethunter-images/current/rootfs/kali-nethunter-rootfs-minimal-{arch}.tar.xz",
             sha256 = mapOf(
-                "aarch64" to ""
+                "aarch64" to "d6403a5da175df325611d23af4b92330856059c45454eced7f4cdf3ca6df2e4e"
             ),
             prootArchs = listOf("aarch64"),
             installSizeMb = 500,

@@ -140,9 +140,6 @@ class DistroInstaller(private val context: Context) {
             File(tarballDir(), "$distroName.tar.xz").delete()
         } catch (_: Exception) {}
         try {
-            File(context.cacheDir, "${distroName}.tar.xz").delete()
-        } catch (_: Exception) {}
-        try {
             File(context.filesDir, "installed/$distroName").delete()
         } catch (_: Exception) {}
         notifyDocumentRootsChanged()
@@ -611,7 +608,6 @@ class DistroInstaller(private val context: Context) {
         com.redtermapp.util.Format.invalidate(dir)
         File(context.filesDir, "installed/$distroName").delete()
         File(tarballDir(), "$distroName.tar.xz").delete()
-        File(context.cacheDir, "${distroName}.tar.xz").delete()
         notifyDocumentRootsChanged()
     }
 

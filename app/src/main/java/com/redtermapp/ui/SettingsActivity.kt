@@ -22,7 +22,6 @@ import com.redtermapp.BuildConfig
 import com.redtermapp.R
 import com.redtermapp.distro.DistroInstaller
 import com.redtermapp.service.TerminalService
-import com.redtermapp.util.Format
 import java.io.File
 
 class SettingsActivity : AppCompatActivity() {
@@ -64,16 +63,7 @@ class SettingsActivity : AppCompatActivity() {
         val themeValues = listOf("default", "amoled", "green", "red", "light", "dracula", "nord", "tokyo", "gruvbox", "custom", "dynamic")
         val themeSpinner = findViewById<Spinner>(R.id.theme_spinner)
         val themeIdx = (themeValues.indexOf(currentTheme)).coerceAtLeast(0)
-        val themeAdapter = object : ArrayAdapter<String>(this, R.layout.spinner_item, themeNames) {
-            override fun getDropDownView(position: Int, convertView: View?, parent: android.view.ViewGroup): View {
-                val row = layoutInflater.inflate(R.layout.spinner_dropdown_checked, parent, false)
-                row.findViewById<TextView>(R.id.dropdown_text).text = themeNames[position]
-                row.findViewById<TextView>(R.id.dropdown_check).visibility =
-                    if (position == themeSpinner.selectedItemPosition) android.view.View.VISIBLE else android.view.View.GONE
-                return row
-            }
-        }
-        themeSpinner.adapter = themeAdapter
+        themeSpinner.adapter = makeCheckedSpinnerAdapter(themeNames, themeSpinner)
         themeSpinner.setSelection(themeIdx)
         themeSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onItemSelected(p: android.widget.AdapterView<*>?, v: View?, pos: Int, id: Long) {
@@ -98,16 +88,7 @@ class SettingsActivity : AppCompatActivity() {
         val fontLabels = fonts.map { if (it.startsWith("custom:")) "${fontDisplayName(it.removePrefix("custom:"))} (custom)" else it }
         val currentFont = prefs.getString("font", "monospace")
         val fontIdx = (fonts.indexOf(currentFont)).coerceAtLeast(0)
-        val fontAdapter = object : ArrayAdapter<String>(this, R.layout.spinner_item, fontLabels) {
-            override fun getDropDownView(position: Int, convertView: View?, parent: android.view.ViewGroup): View {
-                val row = layoutInflater.inflate(R.layout.spinner_dropdown_checked, parent, false)
-                row.findViewById<TextView>(R.id.dropdown_text).text = fontLabels[position]
-                row.findViewById<TextView>(R.id.dropdown_check).visibility =
-                    if (position == fontSpinner.selectedItemPosition) android.view.View.VISIBLE else android.view.View.GONE
-                return row
-            }
-        }
-        fontSpinner.adapter = fontAdapter
+        fontSpinner.adapter = makeCheckedSpinnerAdapter(fontLabels, fontSpinner)
         fontSpinner.setSelection(fontIdx)
         fontSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onItemSelected(p: android.widget.AdapterView<*>?, v: View?, pos: Int, id: Long) {
@@ -325,7 +306,7 @@ class SettingsActivity : AppCompatActivity() {
                         Toast.makeText(this, "Nothing selected", Toast.LENGTH_SHORT).show()
                         return@setPositiveButton
                     }
-                    val outDir = backupDir()
+                    val outDir = DistroUi.backupDir(this)
                     val dialog = android.app.ProgressDialog(this).apply {
                         setTitle("Backing up")
                         setMessage("Creating backup archives...")
@@ -360,7 +341,7 @@ class SettingsActivity : AppCompatActivity() {
                 com.redtermapp.util.StoragePermission.requestAccess(this)
                 return@setOnClickListener
             }
-            val files = backupFiles()
+            val files = DistroUi.backupFiles(this)
             if (files.isEmpty()) {
                 Toast.makeText(this, "No backups found in /sdcard/RedTerm", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
@@ -390,29 +371,6 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         versionInfo.text = "${getString(R.string.app_name)} v${BuildConfig.VERSION_NAME}"
-    }
-
-    private fun backupDir(): java.io.File {
-        val shared = java.io.File(
-            android.os.Environment.getExternalStorageDirectory(), "RedTerm"
-        )
-        shared.mkdirs()
-        return if (shared.exists()) {
-            shared
-        } else {
-            java.io.File(getExternalFilesDir(null), "backups").apply { mkdirs() }
-        }
-    }
-
-    private fun backupFiles(): List<java.io.File> {
-        val files = mutableListOf<java.io.File>()
-        java.io.File(android.os.Environment.getExternalStorageDirectory(), "RedTerm")
-            .listFiles { f -> f.name.endsWith("_backup.tar.gz") }
-            ?.let { files.addAll(it) }
-        getExternalFilesDir(null)
-            ?.listFiles { f -> f.name.endsWith("_backup.tar.gz") }
-            ?.let { files.addAll(it) }
-        return files.distinctBy { it.name }
     }
 
     private fun restoreDistro(backupFile: java.io.File, distroName: String, rootfsDir: java.io.File) {
@@ -607,15 +565,8 @@ class SettingsActivity : AppCompatActivity() {
 
         for (name in installed) {
             val rootfsDir = installer.getRootfsDir(name)
-            val cached = Format.cachedSize(rootfsDir)
-            val sizeLabel = TextView(this).apply {
-                text = if (cached != null) Format.size(cached) else ""
-                setTextColor(mutedTextColor())
-                textSize = 11f
+            val sizeLabel = DistroUi.buildDistroSizeLabel(this, rootfsDir, 11f).apply {
                 setPadding(0, 2, 0, 0)
-            }
-            if (cached == null) {
-                Format.dirSizeAsync(rootfsDir) { bytes -> sizeLabel.text = Format.size(bytes) }
             }
             val card = MaterialCardView(this).apply {
                 layoutParams = LinearLayout.LayoutParams(
@@ -658,9 +609,9 @@ class SettingsActivity : AppCompatActivity() {
     private fun confirmDelete(name: String) {
         AlertDialog.Builder(this)
             .setTitle("Remove $name?")
-            .setMessage("This will delete the rootfs and all data for $name.")
+            .setMessage("This will delete the rootfs, cached files and all data for $name, and kill any running session for it.")
             .setPositiveButton("Delete") { _, _ ->
-                installer.uninstall(name)
+                DistroUi.deleteDistro(this, installer, name)
                 populateDistroList()
                 Toast.makeText(this, "$name removed", Toast.LENGTH_SHORT).show()
             }
@@ -806,6 +757,19 @@ class SettingsActivity : AppCompatActivity() {
             .show()
     }
 
+    private fun makeCheckedSpinnerAdapter(
+        labels: List<String>,
+        spinner: Spinner
+    ): ArrayAdapter<String> = object : ArrayAdapter<String>(this, R.layout.spinner_item, labels) {
+        override fun getDropDownView(position: Int, convertView: View?, parent: android.view.ViewGroup): View {
+            val row = layoutInflater.inflate(R.layout.spinner_dropdown_checked, parent, false)
+            row.findViewById<TextView>(R.id.dropdown_text).text = labels[position]
+            row.findViewById<TextView>(R.id.dropdown_check).visibility =
+                if (position == spinner.selectedItemPosition) android.view.View.VISIBLE else android.view.View.GONE
+            return row
+        }
+    }
+
     private fun rebuildFontSpinner(prefs: android.content.SharedPreferences) {
         val customFonts = customFontFiles().map { it.name }
         val fonts = listOf("JetBrains Mono", "Fira Code", "Source Code Pro", "Ubuntu Mono", "monospace", "Droid Sans Mono", "Noto Sans Mono", "Cascadia Code") + customFonts.map { "custom:$it" }
@@ -813,15 +777,7 @@ class SettingsActivity : AppCompatActivity() {
         val spinner = findViewById<Spinner>(R.id.font_spinner)
         val current = prefs.getString("font", "monospace")
         val idx = (fonts.indexOf(current)).coerceAtLeast(0)
-        spinner.adapter = object : ArrayAdapter<String>(this, R.layout.spinner_item, fontLabels) {
-            override fun getDropDownView(position: Int, convertView: View?, parent: android.view.ViewGroup): View {
-                val row = layoutInflater.inflate(R.layout.spinner_dropdown_checked, parent, false)
-                row.findViewById<TextView>(R.id.dropdown_text).text = fontLabels[position]
-                row.findViewById<TextView>(R.id.dropdown_check).visibility =
-                    if (position == spinner.selectedItemPosition) android.view.View.VISIBLE else android.view.View.GONE
-                return row
-            }
-        }
+        spinner.adapter = makeCheckedSpinnerAdapter(fontLabels, spinner)
         spinner.setSelection(idx)
         spinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onItemSelected(p: android.widget.AdapterView<*>?, v: View?, pos: Int, id: Long) {

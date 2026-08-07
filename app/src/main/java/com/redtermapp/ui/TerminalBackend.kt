@@ -75,7 +75,7 @@ class TerminalBackend(
     override fun onScale(scale: Float): Float {
         fontSize = (fontSize * scale).coerceIn(8f, 36f)
         view.setTextSize(fontSize.toInt())
-        return fontSize / (fontSize / scale)
+        return scale
     }
 
     override fun onSingleTapUp(e: MotionEvent) {

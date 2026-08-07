@@ -6,7 +6,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.view.ContextThemeWrapper
 import android.view.ContextMenu
 import android.view.Gravity
 import android.view.KeyEvent
@@ -199,7 +198,6 @@ class TerminalActivity : AppCompatActivity() {
             for (s in sessions) {
                 s.updateTerminalSessionClient(backend)
             }
-            val prefs = getSharedPreferences("settings", MODE_PRIVATE)
             currentFontSize = prefs.getInt("font_size", 20)
             terminalView.setTextSize(currentFontSize)
             applyFontFromPrefs(prefs)
@@ -457,7 +455,8 @@ class TerminalActivity : AppCompatActivity() {
             rootDir.mkdirs()
 
             val bashrcFile = File(rootDir, ".bashrc")
-            bashrcFile.writeText("""# ~/.bashrc
+            if (!bashrcFile.exists()) {
+                bashrcFile.writeText("""# ~/.bashrc
 export TERM=xterm-256color
 stty erase ^?
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -474,11 +473,10 @@ alias rm='rm -i'
 alias cp='cp -i'
 alias mv='mv -i'
 """)
-            val bashProfileFile = File(rootDir, ".bash_profile")
-            bashProfileFile.writeText("""[ -f /root/.bashrc ] && . /root/.bashrc
-""")
+            }
             val startupFile = File(rootDir, ".startup")
-            startupFile.writeText("""if [ ! -f /root/.init_done ]; then
+            if (!startupFile.exists()) {
+                startupFile.writeText("""if [ ! -f /root/.init_done ]; then
     echo '>>> First-time distro setup...'
     if $pmUpdate 2>/dev/null && $pmInstall $pmQuiet nano wget sudo bash openssl 2>/dev/null; then
         touch /root/.init_done
@@ -492,6 +490,7 @@ if command -v bash >/dev/null 2>&1; then
     exec bash -i
 fi
 """)
+            }
         } catch (e: Exception) {
             android.util.Log.w("TerminalActivity", "writeShellConfigs failed: ${e.message}")
         }
@@ -1047,26 +1046,21 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
     private fun resolveTerminalColors(): Triple<Int, Int, Int> {
         val prefs = getSharedPreferences("settings", MODE_PRIVATE)
         val themeName = prefs.getString("theme", "amoled") ?: "amoled"
-        val wrapped = ContextThemeWrapper(this, AppTheme.themeRes(themeName))
-        fun tca(attr: Int, default: Int): Int {
-            val ta = wrapped.obtainStyledAttributes(intArrayOf(attr))
-            val c = ta.getColor(0, default); ta.recycle(); return c
-        }
         val dynamic = if (themeName == "dynamic") dynamicTerminalColors() else null
         val bg = when {
             themeName == "custom" -> prefs.getInt("custom_bg", 0xFF1E1E2E.toInt())
             dynamic != null -> dynamic.first
-            else -> tca(R.attr.terminalBg, 0xFF1E1E2E.toInt())
+            else -> AppTheme.resolveThemeColor(this, prefs, R.attr.terminalBg, 0xFF1E1E2E.toInt())
         }
         val extraBg = when {
             themeName == "custom" -> prefs.getInt("custom_bg", 0xFF0A0A0A.toInt())
             dynamic != null -> dynamic.second
-            else -> tca(R.attr.extraKeysBg, 0xFF181825.toInt())
+            else -> AppTheme.resolveThemeColor(this, prefs, R.attr.extraKeysBg, 0xFF181825.toInt())
         }
         val textColor = when {
             themeName == "custom" -> prefs.getInt("custom_text", 0xFFCDD6F4.toInt())
             dynamic != null -> dynamic.third
-            else -> tca(R.attr.terminalText, 0xFFCDD6F4.toInt())
+            else -> AppTheme.resolveThemeColor(this, prefs, R.attr.terminalText, 0xFFCDD6F4.toInt())
         }
         return Triple(bg, extraBg, textColor)
     }
@@ -1153,17 +1147,21 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
             prefs.edit().putInt("font_size", currentFontSize).apply()
         }
         findViewById<TextView>(R.id.panel_reset).setOnClickListener {
-            session?.reset()
-            prefs.edit().putString("font", "monospace").apply()
-            applyFontFromPrefs(prefs)
-            currentFontSize = 20
-            prefs.edit().putInt("font_size", 20).apply()
-            terminalView.setTextSize(20)
-            applyTerminalTheme("amoled")
+            resetTerminalDefaults(prefs)
             toggleQuickPanel()
         }
 
         terminalView.setOnTouchListener(null)
+    }
+
+    private fun resetTerminalDefaults(prefs: android.content.SharedPreferences) {
+        session?.reset()
+        prefs.edit().putString("font", "monospace").apply()
+        applyFontFromPrefs(prefs)
+        currentFontSize = 20
+        prefs.edit().putInt("font_size", 20).apply()
+        terminalView.setTextSize(20)
+        applyTerminalTheme("amoled")
     }
 
     private fun toggleQuickPanel() {
@@ -1183,16 +1181,7 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
             2 -> { createNewSession(); true }
             3 -> { currentFontSize = (currentFontSize + 2).coerceAtMost(36); terminalView.setTextSize(currentFontSize); true }
             4 -> { currentFontSize = (currentFontSize - 2).coerceAtLeast(8); terminalView.setTextSize(currentFontSize); true }
-             5 -> {
-                session?.reset()
-                prefs.edit().putString("font", "monospace").apply()
-                applyFontFromPrefs(prefs)
-                currentFontSize = 20
-                prefs.edit().putInt("font_size", 20).apply()
-                terminalView.setTextSize(20)
-                applyTerminalTheme("amoled")
-                true
-            }
+             5 -> { resetTerminalDefaults(prefs); true }
               61 -> { applyTerminalTheme("default"); true }
               62 -> { applyTerminalTheme("green"); true }
               63 -> { applyTerminalTheme("light"); true }

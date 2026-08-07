@@ -1,6 +1,7 @@
 package com.redtermapp.ui
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.view.ContextThemeWrapper
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -20,6 +21,12 @@ object AppTheme {
         "gruvbox" -> R.style.Theme_RedTermApp_Gruvbox
         "custom" -> R.style.Theme_RedTermApp_Custom
         else -> R.style.Theme_RedTermApp
+    }
+
+    fun resolveThemeColor(context: Context, prefs: SharedPreferences, attr: Int, default: Int): Int {
+        val name = NightModeReceiver.effectiveTheme(prefs)
+        val res = themeRes(name)
+        return ContextThemeWrapper(context, res).themeColor(attr, default)
     }
 
     fun apply(activity: ComponentActivity) {
