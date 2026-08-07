@@ -13,6 +13,7 @@ import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
 import com.termux.view.TerminalView
 import com.termux.view.TerminalViewClient
+import java.util.concurrent.Executors
 
 class TerminalBackend(
     val view: TerminalView,
@@ -21,6 +22,15 @@ class TerminalBackend(
 
     companion object {
         val splitViews = mutableSetOf<TerminalView>()
+    }
+
+    private val inputWriteExecutor = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "redterm-input-writer").apply { isDaemon = true }
+    }
+
+    fun writeInput(session: TerminalSession?, text: String) {
+        val s = session ?: return
+        inputWriteExecutor.execute { s.write(text) }
     }
 
     private var ctrlDown = false
@@ -61,7 +71,7 @@ class TerminalBackend(
         } else {
             @Suppress("DEPRECATION") clip.text
         } ?: return
-        session?.write(text.toString())
+        writeInput(session, text.toString())
     }
 
     override fun onBell(session: TerminalSession) {}

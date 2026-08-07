@@ -93,7 +93,7 @@ dependencies {
     implementation("org.tukaani:xz:1.12")
 
     implementation("com.github.termux.termux-app:terminal-emulator:v0.118.3")
-    implementation("com.github.termux.termux-app:terminal-view:v0.118.3")
+    implementation(project(":core:terminal-view"))
     implementation("com.github.anrwatchdog:anrwatchdog:1.4.0")
 
     implementation(project(":core:proot"))
