@@ -7,104 +7,111 @@
     android:background="?attr/terminalBg"
     android:fitsSystemWindows="true">
 
-    <androidx.drawerlayout.widget.DrawerLayout
-        android:id="@+id/drawer_layout"
+    <FrameLayout
+        android:id="@+id/terminal_wrapper"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1">
 
-        <FrameLayout
+        <androidx.drawerlayout.widget.DrawerLayout
+            android:id="@+id/drawer_layout"
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:background="?attr/terminalBg">
+            android:layout_height="match_parent">
 
-            <com.termux.view.TerminalView
-                android:id="@+id/terminal_view"
+            <FrameLayout
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:layout_marginStart="3dp"
-                android:focusable="true"
-                android:focusableInTouchMode="true"
-                android:imeOptions="actionNone|flagNoEnterAction" />
+                android:background="?attr/terminalBg">
 
-        </FrameLayout>
+                <com.termux.view.TerminalView
+                    android:id="@+id/terminal_view"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:layout_marginStart="3dp"
+                    android:focusable="true"
+                    android:focusableInTouchMode="true"
+                    android:imeOptions="actionNone|flagNoEnterAction" />
 
-        <LinearLayout
-            android:id="@+id/sessions_panel"
-            android:layout_width="280dp"
-            android:layout_height="match_parent"
-            android:layout_gravity="start"
-            android:orientation="vertical"
-            android:background="?attr/extraKeysBg"
-            android:fitsSystemWindows="true">
+            </FrameLayout>
 
             <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="40dp"
-                android:gravity="center_vertical"
-                android:paddingHorizontal="12dp">
+                android:id="@+id/sessions_panel"
+                android:layout_width="280dp"
+                android:layout_height="match_parent"
+                android:layout_gravity="start"
+                android:orientation="vertical"
+                android:background="?attr/extraKeysBg"
+                android:fitsSystemWindows="true">
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="\u2630 Sessions"
-                    android:textColor="?attr/terminalText"
-                    android:textSize="13sp"
-                    android:textStyle="bold" />
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:gravity="center_vertical"
+                    android:paddingHorizontal="12dp">
 
-                <TextView
-                    android:id="@+id/distro_size_label"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="\u2630 Sessions"
+                        android:textColor="?attr/terminalText"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/distro_size_label"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginStart="8dp"
+                        android:gravity="end"
+                        android:text=""
+                        android:textColor="?attr/terminalText"
+                        android:textSize="10sp"
+                        android:alpha="0.5" />
+
+                    <TextView
+                        android:id="@+id/session_count"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="0"
+                        android:textColor="?attr/colorPrimary"
+                        android:textSize="12sp"
+                        android:alpha="0.7" />
+
+                </LinearLayout>
+
+                <ScrollView
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
                     android:layout_weight="1"
-                    android:layout_marginStart="8dp"
-                    android:gravity="end"
-                    android:text=""
-                    android:textColor="?attr/terminalText"
-                    android:textSize="10sp"
-                    android:alpha="0.5" />
+                    android:fillViewport="true">
+
+                    <LinearLayout
+                        android:id="@+id/session_list_container"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="4dp" />
+
+                </ScrollView>
 
                 <TextView
-                    android:id="@+id/session_count"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="0"
+                    android:id="@+id/new_session_button"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="4dp"
+                    android:text="+ New Session"
+                    android:foreground="?attr/selectableItemBackground"
                     android:textColor="?attr/colorPrimary"
-                    android:textSize="12sp"
-                    android:alpha="0.7" />
+                    android:textSize="14sp"
+                    android:gravity="center"
+                    android:background="?attr/extraKeysBg" />
 
             </LinearLayout>
 
-            <ScrollView
-                android:layout_width="match_parent"
-                android:layout_height="0dp"
-                android:layout_weight="1"
-                android:fillViewport="true">
+        </androidx.drawerlayout.widget.DrawerLayout>
 
-                <LinearLayout
-                    android:id="@+id/session_list_container"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:padding="4dp" />
-
-            </ScrollView>
-
-            <TextView
-                android:id="@+id/new_session_button"
-                android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:layout_marginTop="4dp"
-                android:text="+ New Session"
-                android:foreground="?attr/selectableItemBackground"
-                android:textColor="?attr/colorPrimary"
-                android:textSize="14sp"
-                android:gravity="center"
-                android:background="?attr/extraKeysBg" />
-
-        </LinearLayout>
-
-    </androidx.drawerlayout.widget.DrawerLayout>
+    </FrameLayout>
 
     <LinearLayout
         android:id="@+id/extra_keys_wrapper"

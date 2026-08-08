@@ -13,6 +13,7 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -44,6 +45,7 @@ class TerminalActivity : AppCompatActivity() {
     private lateinit var sessionListContainer: LinearLayout
     private lateinit var rootContainer: LinearLayout
     private lateinit var extraKeysWrapper: LinearLayout
+    private lateinit var terminalWrapper: FrameLayout
 
     private var terminalBackend: TerminalBackend? = null
     private var currentFontSize = 20
@@ -139,6 +141,7 @@ class TerminalActivity : AppCompatActivity() {
         sessionListContainer = findViewById(R.id.session_list_container)
         rootContainer = findViewById(R.id.root_container)
         extraKeysWrapper = findViewById(R.id.extra_keys_wrapper)
+        terminalWrapper = findViewById(R.id.terminal_wrapper)
 
         registerForContextMenu(terminalView)
 
@@ -407,9 +410,9 @@ class TerminalActivity : AppCompatActivity() {
         if (toColumn) {
             rootContainer.orientation = LinearLayout.HORIZONTAL
             rootContainer.removeView(extraKeysWrapper)
-            rootContainer.removeView(drawerLayout)
+            rootContainer.removeView(terminalWrapper)
             rootContainer.addView(extraKeysWrapper)
-            rootContainer.addView(drawerLayout)
+            rootContainer.addView(terminalWrapper)
 
             extraKeysWrapper.orientation = LinearLayout.VERTICAL
             extraKeysWrapper.layoutParams = LinearLayout.LayoutParams(dp(56), LinearLayout.LayoutParams.MATCH_PARENT)
@@ -421,12 +424,12 @@ class TerminalActivity : AppCompatActivity() {
                 )
             }
 
-            drawerLayout.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
+            terminalWrapper.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
         } else {
             rootContainer.orientation = LinearLayout.VERTICAL
             rootContainer.removeView(extraKeysWrapper)
-            rootContainer.removeView(drawerLayout)
-            rootContainer.addView(drawerLayout)
+            rootContainer.removeView(terminalWrapper)
+            rootContainer.addView(terminalWrapper)
             rootContainer.addView(extraKeysWrapper)
 
             extraKeysWrapper.orientation = LinearLayout.VERTICAL
@@ -441,7 +444,7 @@ class TerminalActivity : AppCompatActivity() {
                 )
             }
 
-            drawerLayout.layoutParams = LinearLayout.LayoutParams(
+            terminalWrapper.layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
             )
         }
