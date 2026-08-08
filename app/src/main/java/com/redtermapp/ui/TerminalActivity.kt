@@ -694,7 +694,7 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
                         }
                     })
                     addView(ImageView(context).apply {
-                        layoutParams = LinearLayout.LayoutParams(dp(12), dp(12)).apply { gravity = Gravity.CENTER }
+                        layoutParams = LinearLayout.LayoutParams(dp(36), dp(36)).apply { gravity = Gravity.CENTER }
                         setImageDrawable(
                             androidx.appcompat.content.res.AppCompatResources.getDrawable(
                                 context, android.R.drawable.ic_menu_close_clear_cancel
@@ -702,7 +702,7 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
                         )
                         imageTintList = android.content.res.ColorStateList.valueOf(mutedTextColor())
                         setOnClickListener { closeSession(i) }
-                        setPadding(0, 0, 0, 0)
+                        setPadding(dp(10), dp(10), dp(10), dp(10))
                     })
                 })
             }
