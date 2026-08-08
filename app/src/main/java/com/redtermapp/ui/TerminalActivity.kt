@@ -148,7 +148,9 @@ class TerminalActivity : AppCompatActivity() {
             sizeLabel.text = "$distroName (${Format.size(bytes)})"
         }
 
-        setupQuickPanel(prefs)
+        if (prefs.getBoolean(Prefs.KEY_WAKELOCK, Prefs.WAKELOCK_DEFAULT)) {
+            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
         if (prefs.getBoolean("autohide_keys", false)) {
             toggleExtraKeys(false)
         }
@@ -263,39 +265,33 @@ class TerminalActivity : AppCompatActivity() {
             split(prefs.getString("extra_keys_row2", d2)!!)
     }
 
-    private fun focusedTerminalView(): com.termux.view.TerminalView =
-        focusedSplitView() ?: terminalView
-
-    private fun focusedSession(): TerminalSession? =
-        splitViewSession[focusedTerminalView()] ?: session
-
     private fun keyAction(label: String): () -> Unit {
         val actions: List<Pair<String, () -> Unit>> = listOf(
             "\u2630" to { toggleSessionsPanel() },
             "MENU" to { toggleSessionsPanel() },
-            "ESC" to { focusedSession()?.writeCodePoint(false, 27); Unit },
-            "TAB" to { focusedSession()?.writeCodePoint(false, 9); Unit },
+            "ESC" to { session?.writeCodePoint(false, 27); Unit },
+            "TAB" to { session?.writeCodePoint(false, 9); Unit },
             "CTRL" to { toggleCtrl() },
             "ALT" to { toggleAlt() },
-            "\u25B2" to { focusedTerminalView().handleKeyCode(KeyEvent.KEYCODE_DPAD_UP, 0); Unit },
-            "UP" to { focusedTerminalView().handleKeyCode(KeyEvent.KEYCODE_DPAD_UP, 0); Unit },
-            "\u25BC" to { focusedTerminalView().handleKeyCode(KeyEvent.KEYCODE_DPAD_DOWN, 0); Unit },
-            "DOWN" to { focusedTerminalView().handleKeyCode(KeyEvent.KEYCODE_DPAD_DOWN, 0); Unit },
-            "\u25C0" to { focusedTerminalView().handleKeyCode(KeyEvent.KEYCODE_DPAD_LEFT, 0); Unit },
-            "LEFT" to { focusedTerminalView().handleKeyCode(KeyEvent.KEYCODE_DPAD_LEFT, 0); Unit },
-            "\u25B6" to { focusedTerminalView().handleKeyCode(KeyEvent.KEYCODE_DPAD_RIGHT, 0); Unit },
-            "RIGHT" to { focusedTerminalView().handleKeyCode(KeyEvent.KEYCODE_DPAD_RIGHT, 0); Unit },
-            "HOME" to { focusedTerminalView().handleKeyCode(KeyEvent.KEYCODE_MOVE_HOME, 0); Unit },
-            "END" to { focusedTerminalView().handleKeyCode(KeyEvent.KEYCODE_MOVE_END, 0); Unit },
-            "INS" to { focusedTerminalView().handleKeyCode(KeyEvent.KEYCODE_INSERT, 0); Unit },
-            "DEL" to { focusedTerminalView().handleKeyCode(KeyEvent.KEYCODE_FORWARD_DEL, 0); Unit },
-            "\u232B" to { focusedTerminalView().handleKeyCode(KeyEvent.KEYCODE_DEL, 0); Unit },
-            "BACKSPACE" to { focusedTerminalView().handleKeyCode(KeyEvent.KEYCODE_DEL, 0); Unit },
-            "\u2014" to { focusedSession()?.write("-"); Unit },
+            "\u25B2" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_UP, 0); Unit },
+            "UP" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_UP, 0); Unit },
+            "\u25BC" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_DOWN, 0); Unit },
+            "DOWN" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_DOWN, 0); Unit },
+            "\u25C0" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_LEFT, 0); Unit },
+            "LEFT" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_LEFT, 0); Unit },
+            "\u25B6" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_RIGHT, 0); Unit },
+            "RIGHT" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_RIGHT, 0); Unit },
+            "HOME" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_MOVE_HOME, 0); Unit },
+            "END" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_MOVE_END, 0); Unit },
+            "INS" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_INSERT, 0); Unit },
+            "DEL" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_FORWARD_DEL, 0); Unit },
+            "\u232B" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DEL, 0); Unit },
+            "BACKSPACE" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DEL, 0); Unit },
+            "\u2014" to { session?.write("-"); Unit },
         )
         val action = actions.firstOrNull { it.first == label }?.second
             ?: {
-                focusedSession()?.write(label)
+                session?.write(label)
                 Unit
             }
         if (label == "CTRL" || label == "ALT") return action
@@ -325,22 +321,22 @@ class TerminalActivity : AppCompatActivity() {
 
     private fun toggleCtrl() {
         ctrlActive = !ctrlActive
-        focusedBackend()?.setCtrl(ctrlActive)
+        terminalBackend?.setCtrl(ctrlActive)
         updateModifierButtons()
     }
 
     private fun toggleAlt() {
         altActive = !altActive
-        focusedBackend()?.setAlt(altActive)
+        terminalBackend?.setAlt(altActive)
         updateModifierButtons()
     }
 
-    private fun consumeModifiers(backend: TerminalBackend? = focusedBackend()) {
+    private fun consumeModifiers() {
         if (!ctrlActive && !altActive) return
         ctrlActive = false
         altActive = false
-        backend?.setCtrl(false)
-        backend?.setAlt(false)
+        terminalBackend?.setCtrl(false)
+        terminalBackend?.setAlt(false)
         updateModifierButtons()
     }
 
@@ -596,9 +592,6 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
         if (idx < 0) return
         sessionLaunchScripts.remove(finishedSession)?.let { path -> File(path).delete() }
         sessionModel.removeSession(idx)
-        if (splitActive) {
-            exitSplit()
-        }
         if (sessions.isEmpty()) {
             finish()
         } else {
@@ -614,109 +607,6 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
         val active = sessionLaunchScripts.values.toHashSet()
         filesDir.listFiles { _, name -> name.startsWith("launch_") && name.endsWith(".sh") }
             ?.forEach { if (it.absolutePath !in active) it.delete() }
-    }
-
-    private var splitActive = false
-    private var splitBackend: TerminalBackend? = null
-    private var splitLeftBackend: TerminalBackend? = null
-    private val splitViewSession = mutableMapOf<com.termux.view.TerminalView, TerminalSession>()
-
-    private fun toggleSplit() {
-        if (splitActive) {
-            exitSplit()
-            return
-        }
-        if (sessions.size < 2) {
-            Toast.makeText(this, "Open a second session to use split view", Toast.LENGTH_SHORT).show()
-            return
-        }
-        splitActive = true
-        val container = findViewById<LinearLayout>(R.id.split_container)
-        val left = findViewById<com.termux.view.TerminalView>(R.id.terminal_view_left)
-        val right = findViewById<com.termux.view.TerminalView>(R.id.terminal_view_right)
-        val secondaryIdx = (currentIndex + 1) % sessions.size
-
-        terminalView.visibility = View.GONE
-        container.visibility = View.VISIBLE
-
-        val lb = TerminalBackend(left, this).also {
-            splitLeftBackend = it
-            wireBackend(it)
-            it.onTap = { splitSelect(left) }
-        }
-        val rb = TerminalBackend(right, this).also {
-            splitBackend = it
-            wireBackend(it)
-            it.onTap = { splitSelect(right) }
-        }
-        sessions[currentIndex].updateTerminalSessionClient(lb)
-        sessions[secondaryIdx].updateTerminalSessionClient(rb)
-        left.setTerminalViewClient(lb)
-        right.setTerminalViewClient(rb)
-        registerForContextMenu(left)
-        registerForContextMenu(right)
-        TerminalBackend.splitViews.clear()
-        TerminalBackend.splitViews.add(left)
-        TerminalBackend.splitViews.add(right)
-        splitViewSession[left] = sessions[currentIndex]
-        splitViewSession[right] = sessions[secondaryIdx]
-
-        val bg = themeColor(R.attr.terminalBg, 0xFF1E1E2E.toInt())
-        for (view in listOf(left, right)) {
-            view.attachSession(splitViewSession[view])
-            view.onScreenUpdated()
-            view.setTextSize(currentFontSize)
-            view.setBackgroundColor(bg)
-            applyFontToView(view, prefs())
-        }
-        left.requestFocus()
-        updateSplitButton()
-    }
-
-    private fun exitSplit() {
-        if (!splitActive) return
-        splitActive = false
-        val container = findViewById<LinearLayout>(R.id.split_container)
-        splitViewSession.clear()
-        TerminalBackend.splitViews.clear()
-        splitBackend = null
-        splitLeftBackend = null
-        for (s in sessions) {
-            terminalBackend?.let { s.updateTerminalSessionClient(it) }
-        }
-        container.visibility = View.GONE
-        terminalView.visibility = View.VISIBLE
-        if (sessions.isNotEmpty() && currentIndex in sessions.indices) {
-            terminalView.attachSession(sessions[currentIndex])
-            terminalView.onScreenUpdated()
-        }
-        terminalView.requestFocus()
-        updateSplitButton()
-    }
-
-    private fun splitSelect(view: com.termux.view.TerminalView) {
-        val s = splitViewSession[view] ?: return
-        val idx = sessions.indexOf(s)
-        if (idx < 0 || idx == currentIndex) return
-        sessionModel.switchToSession(idx)
-        updateDrawer()
-    }
-
-    private fun updateSplitButton() {
-        setCardButtonBg(findViewById<TextView>(R.id.panel_split), splitActive)
-    }
-
-    private fun focusedSplitView(): com.termux.view.TerminalView? {
-        if (!splitActive) return null
-        val left = findViewById<com.termux.view.TerminalView>(R.id.terminal_view_left)
-        val right = findViewById<com.termux.view.TerminalView>(R.id.terminal_view_right)
-        return if (right.hasFocus()) right else left
-    }
-
-    private fun focusedBackend(): TerminalBackend? {
-        if (!splitActive) return terminalBackend
-        val right = findViewById<com.termux.view.TerminalView>(R.id.terminal_view_right)
-        return if (right.hasFocus()) splitBackend else splitLeftBackend
     }
 
     private fun closeSession(index: Int) {
@@ -969,7 +859,6 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
             if (prefs.getBoolean("autohide_keys", false)) {
                 updateExtraKeysVisibility()
             }
-            toggleQuickPanel()
         }
         return super.dispatchTouchEvent(ev)
     }
@@ -1028,15 +917,10 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
         themeSub.add(0, 70, 0, "Custom")
         themeSub.add(0, 79, 0, "Dynamic")
         menu.add(0, 9, 0, "Snippets")
-        menu.add(0, 10, 0, "Quick settings")
     }
 
     override fun onContextMenuClosed(menu: Menu) {
         terminalView.onContextMenuClosed(menu)
-        if (splitActive) {
-            findViewById<com.termux.view.TerminalView>(R.id.terminal_view_left).onContextMenuClosed(menu)
-            findViewById<com.termux.view.TerminalView>(R.id.terminal_view_right).onContextMenuClosed(menu)
-        }
         super.onContextMenuClosed(menu)
     }
 
@@ -1104,54 +988,6 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
         }
     }
 
-    private var panelVisible = false
-
-    private fun setupQuickPanel(prefs: android.content.SharedPreferences) {
-        val panel = findViewById<LinearLayout>(R.id.quick_panel)
-        findViewById<TextView>(R.id.panel_close).setOnClickListener { toggleQuickPanel() }
-
-        findViewById<TextView>(R.id.panel_wakelock).apply {
-            setOnClickListener {
-                val svc = Intent(this@TerminalActivity, com.redtermapp.service.TerminalService::class.java)
-                if (prefs.getBoolean(Prefs.KEY_WAKELOCK, Prefs.WAKELOCK_DEFAULT)) {
-                    prefs.edit().putBoolean(Prefs.KEY_WAKELOCK, false).apply()
-                    svc.action = com.redtermapp.service.TerminalService.ACTION_RELEASE
-                    startService(svc)
-                    setCardButtonBg(this, false)
-                    window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                } else {
-                    prefs.edit().putBoolean(Prefs.KEY_WAKELOCK, true).apply()
-                    svc.action = com.redtermapp.service.TerminalService.ACTION_ACQUIRE
-                    ContextCompat.startForegroundService(this@TerminalActivity, svc)
-                    setCardButtonBg(this, true)
-                    window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                }
-            }
-            setCardButtonBg(this, prefs.getBoolean(Prefs.KEY_WAKELOCK, Prefs.WAKELOCK_DEFAULT))
-        }
-        if (prefs.getBoolean(Prefs.KEY_WAKELOCK, Prefs.WAKELOCK_DEFAULT)) {
-            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        }
-        findViewById<TextView>(R.id.panel_split).setOnClickListener { toggleSplit() }
-        updateSplitButton()
-        findViewById<TextView>(R.id.panel_font_up).setOnClickListener {
-            currentFontSize = (currentFontSize + 2).coerceAtMost(36)
-            terminalView.setTextSize(currentFontSize)
-            prefs.edit().putInt("font_size", currentFontSize).apply()
-        }
-        findViewById<TextView>(R.id.panel_font_down).setOnClickListener {
-            currentFontSize = (currentFontSize - 2).coerceAtLeast(8)
-            terminalView.setTextSize(currentFontSize)
-            prefs.edit().putInt("font_size", currentFontSize).apply()
-        }
-        findViewById<TextView>(R.id.panel_reset).setOnClickListener {
-            resetTerminalDefaults(prefs)
-            toggleQuickPanel()
-        }
-
-        terminalView.setOnTouchListener(null)
-    }
-
     private fun resetTerminalDefaults(prefs: android.content.SharedPreferences) {
         session?.reset()
         prefs.edit().putString("font", "monospace").apply()
@@ -1160,16 +996,6 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
         prefs.edit().putInt("font_size", 20).apply()
         terminalView.setTextSize(20)
         applyTerminalTheme("amoled")
-    }
-
-    private fun toggleQuickPanel() {
-        panelVisible = !panelVisible
-        findViewById<LinearLayout>(R.id.quick_panel).visibility = if (panelVisible) android.view.View.VISIBLE else android.view.View.GONE
-    }
-
-    private fun setCardButtonBg(tv: TextView, active: Boolean) {
-        tv.setBackgroundColor(if (active) modifierHighlightColor() else 0)
-        tv.setTextColor(if (active) 0xFF89B4FA.toInt() else themeColor(R.attr.terminalText, 0xFFCDD6F4.toInt()))
     }
 
     override fun onContextItemSelected(item: MenuItem): Boolean {
@@ -1202,8 +1028,7 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
                     prefs.edit().putString("font", "custom:$fontName").apply()
                     applyFontFromPrefs(prefs); true
                 }
-                 9 -> { showSnippetsDialog(); true }
-                  10 -> { toggleQuickPanel(); true }
+                  9 -> { showSnippetsDialog(); true }
              else -> super.onContextItemSelected(item)
         }
     }

@@ -19,10 +19,6 @@ class TerminalBackend(
     private val context: Context
 ) : TerminalSessionClient, TerminalViewClient {
 
-    companion object {
-        val splitViews = mutableSetOf<TerminalView>()
-    }
-
     private var ctrlDown = false
     private var altDown = false
     private var fontSize = 14f
