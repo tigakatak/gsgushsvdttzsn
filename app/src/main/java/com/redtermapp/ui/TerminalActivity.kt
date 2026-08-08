@@ -42,9 +42,14 @@ class TerminalActivity : AppCompatActivity() {
     private lateinit var terminalView: TerminalView
     private lateinit var drawerLayout: DrawerLayout
     private lateinit var sessionListContainer: LinearLayout
+    private lateinit var rootContainer: LinearLayout
+    private lateinit var extraKeysWrapper: LinearLayout
 
     private var terminalBackend: TerminalBackend? = null
     private var currentFontSize = 20
+    private var extraKeysColumnMode = false
+    private var swipeStartX = 0f
+    private var swipeStartY = 0f
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
@@ -132,6 +137,8 @@ class TerminalActivity : AppCompatActivity() {
         terminalView = findViewById(R.id.terminal_view)
         drawerLayout = findViewById(R.id.drawer_layout)
         sessionListContainer = findViewById(R.id.session_list_container)
+        rootContainer = findViewById(R.id.root_container)
+        extraKeysWrapper = findViewById(R.id.extra_keys_wrapper)
 
         registerForContextMenu(terminalView)
 
@@ -380,11 +387,7 @@ class TerminalActivity : AppCompatActivity() {
     }
 
     private fun toggleExtraKeys(show: Boolean) {
-        val vis = if (show) android.view.View.VISIBLE else android.view.View.GONE
-        for (rowId in intArrayOf(R.id.extra_keys_container, R.id.extra_keys_container_row2)) {
-            val row = findViewById<LinearLayout>(rowId)
-            (row.parent as? android.view.View)?.visibility = vis
-        }
+        extraKeysWrapper.visibility = if (show) android.view.View.VISIBLE else android.view.View.GONE
     }
 
     private fun updateExtraKeysVisibility() {
@@ -392,6 +395,77 @@ class TerminalActivity : AppCompatActivity() {
         toggleExtraKeys(
             if (prefs.getBoolean("autohide_keys", false)) lastImeVisible else true
         )
+    }
+
+    private fun switchExtraKeysMode(toColumn: Boolean) {
+        if (toColumn == extraKeysColumnMode) return
+        extraKeysColumnMode = toColumn
+
+        val row1 = findViewById<LinearLayout>(R.id.extra_keys_container)
+        val row2 = findViewById<LinearLayout>(R.id.extra_keys_container_row2)
+
+        if (toColumn) {
+            rootContainer.orientation = LinearLayout.HORIZONTAL
+            rootContainer.removeView(extraKeysWrapper)
+            rootContainer.removeView(drawerLayout)
+            rootContainer.addView(extraKeysWrapper)
+            rootContainer.addView(drawerLayout)
+
+            extraKeysWrapper.orientation = LinearLayout.VERTICAL
+            extraKeysWrapper.layoutParams = LinearLayout.LayoutParams(dp(56), LinearLayout.LayoutParams.MATCH_PARENT)
+
+            for (row in listOf(row1, row2)) {
+                row.orientation = LinearLayout.VERTICAL
+                row.layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
+                )
+            }
+
+            drawerLayout.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
+        } else {
+            rootContainer.orientation = LinearLayout.VERTICAL
+            rootContainer.removeView(extraKeysWrapper)
+            rootContainer.removeView(drawerLayout)
+            rootContainer.addView(drawerLayout)
+            rootContainer.addView(extraKeysWrapper)
+
+            extraKeysWrapper.orientation = LinearLayout.VERTICAL
+            extraKeysWrapper.layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+
+            for (row in listOf(row1, row2)) {
+                row.orientation = LinearLayout.HORIZONTAL
+                row.layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, dp(40)
+                )
+            }
+
+            drawerLayout.layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
+            )
+        }
+
+        updateButtonLayoutParams(row1)
+        updateButtonLayoutParams(row2)
+        terminalView.onScreenUpdated()
+    }
+
+    private fun updateButtonLayoutParams(container: LinearLayout) {
+        for (i in 0 until container.childCount) {
+            val btn = container.getChildAt(i) as? Button ?: continue
+            btn.layoutParams = if (extraKeysColumnMode) {
+                LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f).apply {
+                    setMargins(2, 4, 2, 4)
+                    gravity = Gravity.CENTER
+                }
+            } else {
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f).apply {
+                    setMargins(2, 4, 2, 4)
+                    gravity = Gravity.CENTER
+                }
+            }
+        }
     }
 
     private val session: TerminalSession?
@@ -854,10 +928,21 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
     }
 
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
-        if (ev.action == android.view.MotionEvent.ACTION_DOWN && ev.y < dp(40) && ev.rawY < dp(120)) {
-            val prefs = prefs()
-            if (prefs.getBoolean("autohide_keys", false)) {
-                updateExtraKeysVisibility()
+        when (ev.action) {
+            android.view.MotionEvent.ACTION_DOWN -> {
+                swipeStartX = ev.x
+                swipeStartY = ev.y
+            }
+            android.view.MotionEvent.ACTION_UP -> {
+                val deltaX = ev.x - swipeStartX
+                val deltaY = ev.y - swipeStartY
+                if (Math.abs(deltaX) > dp(80) && Math.abs(deltaX) > Math.abs(deltaY) * 2) {
+                    if (deltaX < 0) {
+                        switchExtraKeysMode(true)
+                    } else {
+                        switchExtraKeysMode(false)
+                    }
+                }
             }
         }
         return super.dispatchTouchEvent(ev)

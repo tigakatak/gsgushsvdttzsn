@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root_container"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
@@ -105,12 +106,12 @@
 
     </androidx.drawerlayout.widget.DrawerLayout>
 
-    <HorizontalScrollView
+    <LinearLayout
+        android:id="@+id/extra_keys_wrapper"
         android:layout_width="match_parent"
-        android:layout_height="40dp"
-        android:background="?attr/extraKeysBg"
-        android:scrollbars="none"
-        android:fillViewport="true">
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="?attr/extraKeysBg">
 
         <LinearLayout
             android:id="@+id/extra_keys_container"
@@ -118,21 +119,12 @@
             android:layout_height="40dp"
             android:orientation="horizontal" />
 
-    </HorizontalScrollView>
-
-    <HorizontalScrollView
-        android:layout_width="match_parent"
-        android:layout_height="40dp"
-        android:background="?attr/extraKeysBg"
-        android:scrollbars="none"
-        android:fillViewport="true">
-
         <LinearLayout
             android:id="@+id/extra_keys_container_row2"
             android:layout_width="match_parent"
             android:layout_height="40dp"
             android:orientation="horizontal" />
 
-    </HorizontalScrollView>
+    </LinearLayout>
 
 </LinearLayout>
