@@ -72,7 +72,7 @@ class TerminalActivity : AppCompatActivity() {
     private fun wireBackend(backend: TerminalBackend) {
         backend.onSessionFinished = { finishedSession -> handleSessionFinished(finishedSession) }
         backend.onLinkTap = { link, isPath -> handleLinkTap(link, isPath) }
-        backend.onModifierConsumed = { consumeModifiers(backend) }
+        backend.onModifierConsumed = { consumeModifiers() }
         backend.onEmulatorReady = { applyEmulatorColors(backend.view) }
     }
 
