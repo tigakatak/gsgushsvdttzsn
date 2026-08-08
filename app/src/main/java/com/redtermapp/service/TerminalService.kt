@@ -15,6 +15,7 @@ import com.redtermapp.RedTermApp
 import com.redtermapp.ui.AppTheme
 import com.redtermapp.ui.Prefs
 import com.redtermapp.ui.TerminalActivity
+import com.redtermapp.ui.capitalized
 import com.redtermapp.ui.prefs
 import java.io.File
 
