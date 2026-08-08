@@ -116,7 +116,7 @@ class SettingsActivity : AppCompatActivity() {
         renderCustomFontList(prefs)
 
         fontSlider.progress = prefs.getInt(Prefs.KEY_FONT_SIZE, Prefs.FONT_SIZE_DEFAULT)
-        wakelockSwitch.isChecked = prefs.getBoolean(Prefs.KEY_WAKELOCK, false)
+        wakelockSwitch.isChecked = prefs.getBoolean(Prefs.KEY_WAKELOCK, Prefs.WAKELOCK_DEFAULT)
 
         val nightSwitch = findViewById<Switch>(R.id.night_mode_switch)
         nightSwitch.isChecked = prefs.getBoolean("auto_night", false)
@@ -135,12 +135,13 @@ class SettingsActivity : AppCompatActivity() {
         })
 
         wakelockSwitch.setOnCheckedChangeListener { _, isChecked ->
-            prefs.edit().putBoolean("wakelock", isChecked).apply()
+            prefs.edit().putBoolean(Prefs.KEY_WAKELOCK, isChecked).apply()
             val svc = Intent(this, TerminalService::class.java)
             if (isChecked) {
+                svc.action = TerminalService.ACTION_ACQUIRE
                 ContextCompat.startForegroundService(this, svc)
             } else {
-                svc.action = TerminalService.ACTION_STOP
+                svc.action = TerminalService.ACTION_RELEASE
                 startService(svc)
             }
         }
@@ -219,7 +220,7 @@ class SettingsActivity : AppCompatActivity() {
                     put("scrollback", prefs.getInt("scrollback", 4))
                     put("terminal_opacity", prefs.getInt("terminal_opacity", 10))
                     put("autohide_keys", prefs.getBoolean("autohide_keys", false))
-                    put("wakelock", prefs.getBoolean("wakelock", false))
+                    put("wakelock", prefs.getBoolean(Prefs.KEY_WAKELOCK, Prefs.WAKELOCK_DEFAULT))
                     put("auto_night", prefs.getBoolean("auto_night", false))
                 }
                 val fileName = "RedTerm_config.json"
@@ -253,7 +254,7 @@ class SettingsActivity : AppCompatActivity() {
                 edit.putInt("scrollback", json.optInt("scrollback", 4))
                 edit.putInt("terminal_opacity", json.optInt("terminal_opacity", 10))
                 edit.putBoolean("autohide_keys", json.optBoolean("autohide_keys", false))
-                edit.putBoolean("wakelock", json.optBoolean("wakelock", false))
+                edit.putBoolean("wakelock", json.optBoolean("wakelock", Prefs.WAKELOCK_DEFAULT))
                 edit.putBoolean("auto_night", json.optBoolean("auto_night", false))
                 edit.apply()
                 NightModeReceiver.notifyChanged(this, prefs)

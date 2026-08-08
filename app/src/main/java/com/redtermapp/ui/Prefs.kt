@@ -37,6 +37,7 @@ object Prefs {
     const val UV_THREADPOOL_SIZE = 16
     const val ULIMIT_NOFILE = 65536
     const val ULIMIT_NPROC = 65536
+    const val WAKELOCK_DEFAULT = true
 
     val SCROLLBACK_ROWS = intArrayOf(500, 1000, 2000, 3000, 5000, 7500, 10000, 15000, 20000, 30000)
 

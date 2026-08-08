@@ -895,6 +895,7 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
 
     override fun onResume() {
         super.onResume()
+        sendServiceAction(TerminalService.ACTION_AUTO_RELEASE)
         if (!com.redtermapp.util.StoragePermission.isAccessible(this)) {
             val prefs = prefs()
             val lastAsk = prefs.getLong("storage_ask_time", 0L)
@@ -908,6 +909,19 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
         updateModifierButtons()
         updateExtraKeysVisibility()
         RedTermWidgetProvider.updateAll(this)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (sessions.isNotEmpty()) {
+            sendServiceAction(TerminalService.ACTION_AUTO_WAKE)
+        }
+    }
+
+    private fun sendServiceAction(action: String) {
+        try {
+            startService(Intent(this, TerminalService::class.java).apply { this.action = action })
+        } catch (_: Exception) {}
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -1091,22 +1105,23 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
         findViewById<TextView>(R.id.panel_wakelock).apply {
             setOnClickListener {
                 val svc = Intent(this@TerminalActivity, com.redtermapp.service.TerminalService::class.java)
-                if (prefs.getBoolean("wakelock", false)) {
-                    prefs.edit().putBoolean("wakelock", false).apply()
-                    svc.action = com.redtermapp.service.TerminalService.ACTION_STOP
+                if (prefs.getBoolean(Prefs.KEY_WAKELOCK, Prefs.WAKELOCK_DEFAULT)) {
+                    prefs.edit().putBoolean(Prefs.KEY_WAKELOCK, false).apply()
+                    svc.action = com.redtermapp.service.TerminalService.ACTION_RELEASE
                     startService(svc)
                     setCardButtonBg(this, false)
                     window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 } else {
-                    prefs.edit().putBoolean("wakelock", true).apply()
+                    prefs.edit().putBoolean(Prefs.KEY_WAKELOCK, true).apply()
+                    svc.action = com.redtermapp.service.TerminalService.ACTION_ACQUIRE
                     ContextCompat.startForegroundService(this@TerminalActivity, svc)
                     setCardButtonBg(this, true)
                     window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 }
             }
-            setCardButtonBg(this, prefs.getBoolean("wakelock", false))
+            setCardButtonBg(this, prefs.getBoolean(Prefs.KEY_WAKELOCK, Prefs.WAKELOCK_DEFAULT))
         }
-        if (prefs.getBoolean("wakelock", false)) {
+        if (prefs.getBoolean(Prefs.KEY_WAKELOCK, Prefs.WAKELOCK_DEFAULT)) {
             window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
         findViewById<TextView>(R.id.panel_split).setOnClickListener { toggleSplit() }

@@ -23,6 +23,8 @@ class TerminalService : Service() {
     companion object {
         const val ACTION_ACQUIRE = "com.redtermapp.action.ACQUIRE_WAKELOCK"
         const val ACTION_RELEASE = "com.redtermapp.action.RELEASE_WAKELOCK"
+        const val ACTION_AUTO_WAKE = "com.redtermapp.action.AUTO_WAKE"
+        const val ACTION_AUTO_RELEASE = "com.redtermapp.action.AUTO_RELEASE"
         const val ACTION_EXIT = "com.redtermapp.action.EXIT"
         const val ACTION_STOP = "com.redtermapp.action.STOP"
 
@@ -38,6 +40,8 @@ class TerminalService : Service() {
 
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
+    private var userWakelockHeld = false
+    private var autoWakelockHeld = false
 
     override fun onCreate() {
         super.onCreate()
@@ -53,33 +57,48 @@ class TerminalService : Service() {
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build()
         startForeground(RedTermApp.NOTIF_ID_TERMINAL, notif)
+        acquireWifiLock()
         updateNotification()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_ACQUIRE -> {
-                acquireWakeLock()
+                userWakelockHeld = true
+                prefs().edit().putBoolean(Prefs.KEY_WAKELOCK, true).apply()
+                updateWakeLock()
                 updateNotification()
             }
             ACTION_RELEASE -> {
-                releaseWakeLock()
+                userWakelockHeld = false
+                prefs().edit().putBoolean(Prefs.KEY_WAKELOCK, false).apply()
+                updateWakeLock()
                 updateNotification()
+            }
+            ACTION_AUTO_WAKE -> {
+                autoWakelockHeld = true
+                updateWakeLock()
+            }
+            ACTION_AUTO_RELEASE -> {
+                autoWakelockHeld = false
+                updateWakeLock()
             }
             ACTION_EXIT -> {
                 releaseWakeLock()
+                releaseWifiLock()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
             ACTION_STOP -> {
                 releaseWakeLock()
+                releaseWifiLock()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
             else -> {
                 val prefs = prefs()
-                val wakelockEnabled = prefs.getBoolean(Prefs.KEY_WAKELOCK, false)
-                if (wakelockEnabled) acquireWakeLock() else releaseWakeLock()
+                userWakelockHeld = prefs.getBoolean(Prefs.KEY_WAKELOCK, true)
+                updateWakeLock()
                 updateNotification()
             }
         }
@@ -90,23 +109,35 @@ class TerminalService : Service() {
 
     override fun onDestroy() {
         releaseWakeLock()
+        releaseWifiLock()
         super.onDestroy()
+    }
+
+    private fun updateWakeLock() {
+        val shouldHold = userWakelockHeld || autoWakelockHeld
+        if (shouldHold && wakeLock?.isHeld != true) {
+            acquireWakeLock()
+        } else if (!shouldHold && wakeLock?.isHeld == true) {
+            releaseWakeLock()
+        }
     }
 
     private fun acquireWakeLock() {
         if (wakeLock?.isHeld == true) return
-        val pm = getSystemService(PowerManager::class.java)
-        wakeLock = pm.newWakeLock(
-            PowerManager.PARTIAL_WAKE_LOCK,
-            "RedTermApp:TerminalWakeLock"
-        ).apply { acquire() }
-        acquireWifiLock()
+        try {
+            val pm = getSystemService(PowerManager::class.java) ?: return
+            wakeLock = pm.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "RedTermApp:TerminalWakeLock"
+            ).apply { acquire() }
+        } catch (e: Exception) {
+            Log.w("TerminalService", "Failed to acquire wake lock", e)
+        }
     }
 
     private fun releaseWakeLock() {
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
-        releaseWifiLock()
     }
 
     private fun acquireWifiLock() {
@@ -142,17 +173,18 @@ class TerminalService : Service() {
 
         val isHeld = wakeLock?.isHeld == true
         val wakelockStatus = if (isHeld) "\u25CF" else "\u25CB"
+        val autoStatus = if (autoWakelockHeld && !userWakelockHeld) " (auto)" else ""
 
         val builder = NotificationCompat.Builder(this, RedTermApp.CHANNEL_TERMINAL)
             .setContentTitle("RedTerm - ${getDistroName()}")
-            .setContentText("$wakelockStatus Wake lock | Tap to open")
+            .setContentText("$wakelockStatus Wake lock$autoStatus | Tap to open")
             .setSmallIcon(com.redtermapp.R.drawable.ic_notification)
             .setColor(themeAccent())
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
 
-        if (isHeld) {
+        if (userWakelockHeld) {
             val releaseIntent = Intent(this, TerminalService::class.java).apply { action = ACTION_RELEASE }
             val releasePI = PendingIntent.getService(
                 this, 1, releaseIntent,
