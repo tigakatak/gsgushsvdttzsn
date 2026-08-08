@@ -128,10 +128,7 @@ class TerminalBackend(
         return null
     }
 
-    override fun shouldBackButtonBeMappedToEscape(): Boolean {
-        val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager
-        return imm?.isAcceptingText() != true
-    }
+    override fun shouldBackButtonBeMappedToEscape(): Boolean = false
     override fun shouldEnforceCharBasedInput(): Boolean = true
     override fun shouldUseCtrlSpaceWorkaround(): Boolean = true
     override fun isTerminalViewSelected(): Boolean = true
