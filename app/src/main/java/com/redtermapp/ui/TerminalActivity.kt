@@ -408,14 +408,11 @@ class TerminalActivity : AppCompatActivity() {
         val row2 = findViewById<LinearLayout>(R.id.extra_keys_container_row2)
 
         if (toColumn) {
-            rootContainer.orientation = LinearLayout.HORIZONTAL
-            rootContainer.removeView(extraKeysWrapper)
-            rootContainer.removeView(terminalWrapper)
-            rootContainer.addView(extraKeysWrapper)
-            rootContainer.addView(terminalWrapper)
+            val keysWidth = dp(56)
+            val termWidth = (rootContainer.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels) - keysWidth
 
             extraKeysWrapper.orientation = LinearLayout.VERTICAL
-            extraKeysWrapper.layoutParams = LinearLayout.LayoutParams(dp(56), LinearLayout.LayoutParams.MATCH_PARENT)
+            extraKeysWrapper.layoutParams = LinearLayout.LayoutParams(keysWidth, LinearLayout.LayoutParams.MATCH_PARENT)
 
             for (row in listOf(row1, row2)) {
                 row.orientation = LinearLayout.VERTICAL
@@ -424,14 +421,14 @@ class TerminalActivity : AppCompatActivity() {
                 )
             }
 
-            terminalWrapper.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
-        } else {
-            rootContainer.orientation = LinearLayout.VERTICAL
+            terminalWrapper.layoutParams = LinearLayout.LayoutParams(termWidth, LinearLayout.LayoutParams.MATCH_PARENT)
+
+            rootContainer.orientation = LinearLayout.HORIZONTAL
             rootContainer.removeView(extraKeysWrapper)
             rootContainer.removeView(terminalWrapper)
-            rootContainer.addView(terminalWrapper)
             rootContainer.addView(extraKeysWrapper)
-
+            rootContainer.addView(terminalWrapper)
+        } else {
             extraKeysWrapper.orientation = LinearLayout.VERTICAL
             extraKeysWrapper.layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
@@ -447,6 +444,12 @@ class TerminalActivity : AppCompatActivity() {
             terminalWrapper.layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
             )
+
+            rootContainer.orientation = LinearLayout.VERTICAL
+            rootContainer.removeView(extraKeysWrapper)
+            rootContainer.removeView(terminalWrapper)
+            rootContainer.addView(terminalWrapper)
+            rootContainer.addView(extraKeysWrapper)
         }
 
         updateButtonLayoutParams(row1)
