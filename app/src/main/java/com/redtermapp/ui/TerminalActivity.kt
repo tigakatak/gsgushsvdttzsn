@@ -1029,7 +1029,6 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
         themeSub.add(0, 79, 0, "Dynamic")
         menu.add(0, 9, 0, "Snippets")
         menu.add(0, 10, 0, "Quick settings")
-        menu.add(0, 11, 0, "Split view")
     }
 
     override fun onContextMenuClosed(menu: Menu) {
@@ -1204,9 +1203,8 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
                     applyFontFromPrefs(prefs); true
                 }
                  9 -> { showSnippetsDialog(); true }
-                 10 -> { toggleQuickPanel(); true }
-                 11 -> { toggleSplit(); true }
-            else -> super.onContextItemSelected(item)
+                  10 -> { toggleQuickPanel(); true }
+             else -> super.onContextItemSelected(item)
         }
     }
 
