@@ -72,7 +72,7 @@ class NightModeReceiver : BroadcastReceiver() {
     }
 
     override fun onReceive(context: Context, intent: Intent?) {
-        val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+        val prefs = context.prefs()
         scheduleNightMode(context, prefs)
         if (!prefs.getBoolean("auto_night", false)) return
 

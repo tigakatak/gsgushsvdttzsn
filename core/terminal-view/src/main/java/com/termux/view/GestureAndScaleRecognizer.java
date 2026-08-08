@@ -55,7 +55,7 @@ final class GestureAndScaleRecognizer {
                 mListener.onLongPress(e);
                 isAfterLongPress = true;
             }
-        }, null, true /* ignoreMultitouch */);
+        });
 
         mGestureDetector.setOnDoubleTapListener(new GestureDetector.OnDoubleTapListener() {
             @Override

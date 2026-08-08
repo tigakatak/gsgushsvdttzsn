@@ -49,7 +49,7 @@ class WelcomeActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_welcome)
 
-        val prefs = getSharedPreferences("settings", android.content.Context.MODE_PRIVATE)
+        val prefs = prefs()
         if (com.redtermapp.util.AppLock.isUnlocked(prefs)) {
             finishSetup()
         } else {

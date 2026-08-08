@@ -37,7 +37,7 @@ class RedTermWidgetProvider : AppWidgetProvider() {
         val installer = DistroInstaller(context)
         val distros = installer.getInstalledDistros()
 
-        val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+        val prefs = context.prefs()
         val chosen = prefs.getString("widget_distro_$widgetId", null)
         val distro = when {
             distros.isEmpty() -> null
@@ -56,7 +56,7 @@ class RedTermWidgetProvider : AppWidgetProvider() {
                 context, 0, openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             ))
         } else {
-            views.setTextViewText(R.id.widget_distro_name, distro.replaceFirstChar { it.uppercase() })
+            views.setTextViewText(R.id.widget_distro_name, distro.capitalized())
             val rootfsDir = installer.getRootfsDir(distro)
             val cached = Format.cachedSize(rootfsDir)
             val sizeStr = if (cached != null) Format.size(cached) else ""

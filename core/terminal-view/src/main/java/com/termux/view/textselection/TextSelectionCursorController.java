@@ -1,12 +1,10 @@
 package com.termux.view.textselection;
 
-import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.graphics.Rect;
 import android.text.TextUtils;
 import android.view.ActionMode;
-import android.view.InputDevice;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.MotionEvent;
@@ -109,7 +107,7 @@ public class TextSelectionCursorController implements CursorController {
     }
     
     public void setActionModeCallBacks() {
-        final ActionMode.Callback callback = new ActionMode.Callback() {
+        mActionMode = terminalView.startActionMode(new ActionMode.Callback2() {
             @Override
             public boolean onCreateActionMode(ActionMode mode, Menu menu) {
                 int show = MenuItem.SHOW_AS_ACTION_IF_ROOM | MenuItem.SHOW_AS_ACTION_WITH_TEXT;
@@ -129,7 +127,6 @@ public class TextSelectionCursorController implements CursorController {
             @Override
             public boolean onActionItemClicked(ActionMode mode, MenuItem item) {
                 if (!isActive()) {
-                    // Fix issue where the dialog is pressed while being dismissed.
                     return true;
                 }
 
@@ -144,12 +141,7 @@ public class TextSelectionCursorController implements CursorController {
                         terminalView.mTermSession.onPasteTextFromClipboard();
                         break;
                     case ACTION_MORE:
-                        // We first store the selected text in case TerminalViewClient needs the
-                        // selected text before MORE button was pressed since we are going to
-                        // stop selection mode
                         mStoredSelectedText = getSelectedText();
-                        // The text selection needs to be stopped before showing context menu,
-                        // otherwise handles will show above popup
                         terminalView.stopTextSelectionMode();
                         terminalView.showContextMenu();
                         break;
@@ -160,29 +152,6 @@ public class TextSelectionCursorController implements CursorController {
 
             @Override
             public void onDestroyActionMode(ActionMode mode) {
-            }
-
-        };
-
-        mActionMode = terminalView.startActionMode(new ActionMode.Callback2() {
-            @Override
-            public boolean onCreateActionMode(ActionMode mode, Menu menu) {
-                return callback.onCreateActionMode(mode, menu);
-            }
-
-            @Override
-            public boolean onPrepareActionMode(ActionMode mode, Menu menu) {
-                return false;
-            }
-
-            @Override
-            public boolean onActionItemClicked(ActionMode mode, MenuItem item) {
-                return callback.onActionItemClicked(mode, item);
-            }
-
-            @Override
-            public void onDestroyActionMode(ActionMode mode) {
-                // Ignore.
             }
 
             @Override
@@ -322,7 +291,7 @@ public class TextSelectionCursorController implements CursorController {
                     return cend;
                 }
                 if (cend == col) {
-                    return col;
+                    continue;
                 }
                 col = cend;
             }
@@ -383,20 +352,6 @@ public class TextSelectionCursorController implements CursorController {
 
     public ActionMode getActionMode() {
         return mActionMode;
-    }
-
-    /**
-     * @return true if this controller is currently used to move the start selection.
-     */
-    public boolean isSelectionStartDragged() {
-        return mStartHandle.isDragging();
-    }
-
-    /**
-     * @return true if this controller is currently used to move the end selection.
-     */
-    public boolean isSelectionEndDragged() {
-        return mEndHandle.isDragging();
     }
 
 }

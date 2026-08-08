@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import android.os.Environment
 import android.widget.TextView
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.redtermapp.distro.DistroInstaller
 import com.redtermapp.util.Format
@@ -15,6 +16,24 @@ object DistroUi {
         TerminalViewModel.get(activity.application as Application).removeSessionsForDistro(name)
         installer.uninstall(name)
         RedTermWidgetProvider.updateAll(activity)
+    }
+
+    fun confirmDelete(
+        activity: AppCompatActivity,
+        installer: DistroInstaller,
+        name: String,
+        onDeleted: () -> Unit
+    ) {
+        AlertDialog.Builder(activity)
+            .setTitle("Remove $name?")
+            .setMessage("This will delete the rootfs, cached files and all data for $name, and kill any running session for it.")
+            .setPositiveButton("Delete") { _, _ ->
+                deleteDistro(activity, installer, name)
+                onDeleted()
+                android.widget.Toast.makeText(activity, "$name removed", android.widget.Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     fun buildDistroSizeLabel(context: Context, rootfsDir: File, textSize: Float): TextView {

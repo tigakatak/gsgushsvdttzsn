@@ -34,7 +34,6 @@ import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import android.widget.Scroller;
 
-import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 
 import com.termux.terminal.KeyHandler;
@@ -46,7 +45,7 @@ import com.termux.view.textselection.TextSelectionCursorController;
 public final class TerminalView extends View {
 
     /** Log terminal view key and IME events. */
-    private static boolean TERMINAL_VIEW_KEY_LOGGING_ENABLED = false;
+    private static final boolean TERMINAL_VIEW_KEY_LOGGING_ENABLED = false;
 
     /** The currently displayed terminal session, whose emulator is {@link #mEmulator}. */
     public TerminalSession mTermSession;
@@ -62,7 +61,6 @@ public final class TerminalView extends View {
     private Handler mTerminalCursorBlinkerHandler;
     private TerminalCursorBlinkerRunnable mTerminalCursorBlinkerRunnable;
     private int mTerminalCursorBlinkerRate;
-    private boolean mCursorInvisibleIgnoreOnce;
     public static final int TERMINAL_CURSOR_BLINK_RATE_MIN = 100;
     public static final int TERMINAL_CURSOR_BLINK_RATE_MAX = 2000;
 
@@ -201,6 +199,7 @@ public final class TerminalView extends View {
                     mScroller.fling(0, mTopRow, 0, -(int) (velocityY * SCALE), 0, 0, -mEmulator.getScreen().getActiveTranscriptRows(), 0);
                 }
 
+                final MotionEvent e2Copy = MotionEvent.obtain(e2);
                 post(new Runnable() {
                     private int mLastY = 0;
 
@@ -210,13 +209,17 @@ public final class TerminalView extends View {
                             mScroller.abortAnimation();
                             return;
                         }
-                        if (mScroller.isFinished()) return;
+                        if (mScroller.isFinished()) {
+                            e2Copy.recycle();
+                            return;
+                        }
                         boolean more = mScroller.computeScrollOffset();
                         int newY = mScroller.getCurrY();
                         int diff = mouseTrackingAtStartOfFling ? (newY - mLastY) : (newY - mTopRow);
-                        doScroll(e2, diff);
+                        doScroll(e2Copy, diff);
                         mLastY = newY;
                         if (more) post(this);
+                        else e2Copy.recycle();
                     }
                 });
 
@@ -263,15 +266,6 @@ public final class TerminalView extends View {
      */
     public void setTerminalViewClient(TerminalViewClient client) {
         this.mClient = client;
-    }
-
-    /**
-     * Sets whether terminal view key logging is enabled or not.
-     *
-     * @param value The boolean value that defines the state.
-     */
-    public void setIsTerminalViewKeyLoggingEnabled(boolean value) {
-        TERMINAL_VIEW_KEY_LOGGING_ENABLED = value;
     }
 
 
@@ -339,6 +333,7 @@ public final class TerminalView extends View {
                 if (TERMINAL_VIEW_KEY_LOGGING_ENABLED) mClient.logInfo(LOG_TAG, "IME: finishComposingText()");
                 super.finishComposingText();
 
+                if (mEmulator == null) return true;
                 Editable content = getEditable();
                 sendBulkOrPerChar(content);
                 content.clear();
@@ -517,7 +512,7 @@ public final class TerminalView extends View {
     }
 
     public void setTypeface(Typeface newTypeface) {
-        mRenderer = new TerminalRenderer(mRenderer.mTextSize, newTypeface);
+        mRenderer = new TerminalRenderer(mRenderer == null ? 14 : mRenderer.mTextSize, newTypeface);
         updateSize();
         invalidate();
     }
@@ -617,14 +612,17 @@ public final class TerminalView extends View {
                 return true;
             } else if (event.isButtonPressed(MotionEvent.BUTTON_TERTIARY)) {
                 ClipboardManager clipboardManager = (ClipboardManager) getContext().getSystemService(Context.CLIPBOARD_SERVICE);
-                ClipData clipData = clipboardManager.getPrimaryClip();
-                if (clipData != null) {
-                    ClipData.Item clipItem = clipData.getItemAt(0);
-                    if (clipItem != null) {
-                        CharSequence text = clipItem.coerceToText(getContext());
-                        if (!TextUtils.isEmpty(text)) mEmulator.paste(text.toString());
+                if (clipboardManager != null) {
+                    ClipData clipData = clipboardManager.getPrimaryClip();
+                    if (clipData != null) {
+                        ClipData.Item clipItem = clipData.getItemAt(0);
+                        if (clipItem != null) {
+                            CharSequence text = clipItem.coerceToText(getContext());
+                            if (!TextUtils.isEmpty(text)) mEmulator.paste(text.toString());
+                        }
                     }
                 }
+                return true;
             } else if (mEmulator.isMouseTrackingActive()) { // BUTTON_PRIMARY.
                 switch (event.getAction()) {
                     case MotionEvent.ACTION_DOWN:
@@ -979,7 +977,7 @@ public final class TerminalView extends View {
     public void updateSize() {
         int viewWidth = getWidth();
         int viewHeight = getHeight();
-        if (viewWidth == 0 || viewHeight == 0 || mTermSession == null) return;
+        if (viewWidth == 0 || viewHeight == 0 || mTermSession == null || mRenderer == null) return;
 
         // Set to 80 and 24 if you want to enable vttest.
         int newColumns = Math.max(4, (int) (viewWidth / mRenderer.mFontWidth));
@@ -1018,10 +1016,6 @@ public final class TerminalView extends View {
         }
     }
 
-    public TerminalSession getCurrentSession() {
-        return mTermSession;
-    }
-
     private CharSequence getText() {
         return mEmulator.getScreen().getSelectedText(0, mTopRow, mEmulator.mColumns, mTopRow + mEmulator.mRows);
     }
@@ -1031,7 +1025,7 @@ public final class TerminalView extends View {
     }
 
     public int getCursorY(float y) {
-        return (int) (((y - 40) / mRenderer.mFontLineSpacing) + mTopRow);
+        return (int) (((y - mRenderer.mFontLineSpacingAndAscent) / mRenderer.mFontLineSpacing) + mTopRow);
     }
 
     public int getPointX(int cx) {
@@ -1111,30 +1105,6 @@ public final class TerminalView extends View {
             mClient.logStackTraceWithMessage(LOG_TAG, "Failed to get AutofillManager service", e);
             return null;
         }
-    }
-
-    public boolean isAutoFillEnabled() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false;
-
-        try {
-            AutofillManager autofillManager = getAutoFillManagerService();
-            return autofillManager != null && autofillManager.isEnabled();
-        } catch (Exception e) {
-            mClient.logStackTraceWithMessage(LOG_TAG, "Failed to check if Autofill is enabled", e);
-            return false;
-        }
-    }
-
-    public synchronized void requestAutoFillUsername() {
-        requestAutoFill(
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.O ? new String[]{View.AUTOFILL_HINT_USERNAME} :
-                null);
-    }
-
-    public synchronized void requestAutoFillPassword() {
-        requestAutoFill(
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.O ? new String[]{View.AUTOFILL_HINT_PASSWORD} :
-            null);
     }
 
     public synchronized void requestAutoFill(String[] autoFillHints) {
@@ -1324,7 +1294,6 @@ public final class TerminalView extends View {
                     // which checks with TerminalEmulator.shouldCursorBeVisible() to decide whether
                     // to draw the cursor or not
                     mCursorVisible = !mCursorVisible;
-                    //mClient.logVerbose(LOG_TAG, "Toggling cursor blink state to " + mCursorVisible);
                     mEmulator.setCursorBlinkState(mCursorVisible);
                     invalidate();
                 }
@@ -1382,12 +1351,6 @@ public final class TerminalView extends View {
             return null;
     }
 
-    /** Get the selected text stored before "MORE" button was pressed on the context menu. */
-    @Nullable
-    public String getStoredSelectedText() {
-        return mTextSelectionCursorController != null ? mTextSelectionCursorController.getStoredSelectedText() : null;
-    }
-
     /** Unset the selected text stored before "MORE" button was pressed on the context menu. */
     public void unsetStoredSelectedText() {
         if (mTextSelectionCursorController != null) mTextSelectionCursorController.unsetStoredSelectedText();
@@ -1439,11 +1402,12 @@ public final class TerminalView extends View {
         super.onDetachedFromWindow();
 
         if (mTextSelectionCursorController != null) {
-            // Might solve the following exception
-            // android.view.WindowLeaked: Activity com.termux.app.TermuxActivity has leaked window android.widget.PopupWindow
             stopTextSelectionMode();
 
-            getViewTreeObserver().removeOnTouchModeChangeListener(mTextSelectionCursorController);
+            final ViewTreeObserver observer = getViewTreeObserver();
+            if (observer != null) {
+                observer.removeOnTouchModeChangeListener(mTextSelectionCursorController);
+            }
             mTextSelectionCursorController.onDetached();
         }
     }

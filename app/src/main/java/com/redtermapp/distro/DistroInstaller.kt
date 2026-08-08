@@ -5,6 +5,7 @@ import android.os.Build
 import android.provider.DocumentsContract
 import android.util.Log
 import com.redtermapp.DnsHelper
+import com.redtermapp.ui.Prefs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
@@ -152,42 +153,44 @@ class DistroInstaller(private val context: Context) {
     ) {
         val httpUrl = URL(urlString)
         val conn = httpUrl.openConnection() as HttpURLConnection
-        conn.connectTimeout = 30000
-        conn.readTimeout = 120000
-        conn.instanceFollowRedirects = true
-        conn.connect()
+        try {
+            conn.connectTimeout = Prefs.CONNECT_TIMEOUT_MS
+            conn.readTimeout = Prefs.READ_TIMEOUT_MS
+            conn.instanceFollowRedirects = true
+            conn.connect()
 
-        val responseCode = conn.responseCode
-        if (responseCode != HttpURLConnection.HTTP_OK) {
-            conn.disconnect()
-            throw Exception("HTTP $responseCode for $urlString")
-        }
+            val responseCode = conn.responseCode
+            if (responseCode != HttpURLConnection.HTTP_OK) {
+                throw Exception("HTTP $responseCode for $urlString")
+            }
 
-        val total = conn.contentLengthLong
-        val buffer = ByteArray(8192)
+            val total = conn.contentLengthLong
+            val buffer = ByteArray(8192)
 
-        FileOutputStream(dest).use { output ->
-            conn.inputStream.use { input ->
-                var read: Int
-                var downloaded = 0L
-                val startTime = System.currentTimeMillis()
+            FileOutputStream(dest).use { output ->
+                conn.inputStream.use { input ->
+                    var read: Int
+                    var downloaded = 0L
+                    val startTime = System.currentTimeMillis()
 
-                while (input.read(buffer).also { read = it } != -1) {
-                    checkCancel()
-                    output.write(buffer, 0, read)
-                    downloaded += read
-                    if (total > 0) {
-                        val percent = ((downloaded * 100) / total).toInt()
-                        val elapsed = (System.currentTimeMillis() - startTime) / 1000
-                        val speed = if (elapsed > 0) {
-                            "${(downloaded / 1024 / elapsed)} KB/s"
-                        } else "0 KB/s"
-                        onProgress(Progress(percent, speed))
+                    while (input.read(buffer).also { read = it } != -1) {
+                        checkCancel()
+                        output.write(buffer, 0, read)
+                        downloaded += read
+                        if (total > 0) {
+                            val percent = ((downloaded * 100) / total).toInt()
+                            val elapsed = (System.currentTimeMillis() - startTime) / 1000
+                            val speed = if (elapsed > 0) {
+                                "${(downloaded / 1000 / elapsed)} KB/s"
+                            } else "0 KB/s"
+                            onProgress(Progress(percent, speed))
+                        }
                     }
                 }
             }
+        } finally {
+            conn.disconnect()
         }
-        conn.disconnect()
     }
 
     private fun verifyChecksum(file: File, expectedSha256: String) {
@@ -333,10 +336,20 @@ class DistroInstaller(private val context: Context) {
             val target = File(dest, entryName)
             if (entry.isSymbolicLink) {
                 val linkTarget = entry.linkName
-                target.parentFile?.mkdirs()
                 try {
-                    target.delete()
-                    android.system.Os.symlink(linkTarget, target.absolutePath)
+                    val canonicalDest = dest.canonicalFile
+                    val canonicalTarget = target.parentFile?.canonicalFile
+                    val resolvedTarget = canonicalTarget?.resolve(linkTarget)?.canonicalFile
+                    val isSafe = resolvedTarget != null &&
+                        (resolvedTarget == canonicalDest ||
+                         resolvedTarget.path.startsWith(canonicalDest.path + File.separator))
+                    if (!isSafe) {
+                        Log.w("DistroInstaller", "Skipping unsafe symlink ${entry.name} -> $linkTarget")
+                    } else {
+                        target.parentFile?.mkdirs()
+                        target.delete()
+                        android.system.Os.symlink(linkTarget, target.absolutePath)
+                    }
                 } catch (e: Exception) {
                     Log.w("DistroInstaller", "Symlink failed ${entry.name}: ${e.message}")
                 }
@@ -387,7 +400,7 @@ class DistroInstaller(private val context: Context) {
             lines.add("nameserver $s")
         }
         if (dns.size < 3) {
-            for (fallback in listOf("8.8.8.8", "1.1.1.1")) {
+            for (fallback in Prefs.DNS_FALLBACKS) {
                 if (!lines.any { it.contains(fallback) }) {
                     lines.add("nameserver $fallback")
                 }
@@ -599,7 +612,7 @@ class DistroInstaller(private val context: Context) {
 
     fun getInstalledDistros(): List<String> {
         val dir = File(context.filesDir, "installed")
-        return if (dir.exists()) dir.list()?.toList() ?: emptyList() else emptyList()
+        return if (dir.exists()) dir.list()?.filter { getRootfsDir(it).isDirectory }?.toList() ?: emptyList() else emptyList()
     }
 
     fun uninstall(distroName: String) {
@@ -614,17 +627,21 @@ class DistroInstaller(private val context: Context) {
     fun backup(distroName: String, outDir: File): Boolean {
         val rootfsDir = getRootfsDir(distroName)
         val backupFile = File(outDir, "${distroName}_backup.tar.gz")
+        var proc: Process? = null
         return try {
             val pb = ProcessBuilder(
                 "tar", "-czf", backupFile.absolutePath,
                 "-C", rootfsDir.parentFile?.absolutePath ?: "", rootfsDir.name
             )
             pb.redirectErrorStream(true)
-            val proc = pb.start()
+            proc = pb.start()
+            proc.inputStream.use { it.readBytes() }
             proc.waitFor()
             backupFile.exists() && backupFile.length() > 0
         } catch (_: Exception) {
             false
+        } finally {
+            proc?.destroy()
         }
     }
 
@@ -643,13 +660,5 @@ class DistroInstaller(private val context: Context) {
     private fun createDeviceNodes(rootfs: File) {
         val devDir = File(rootfs, "dev")
         devDir.mkdirs()
-        for (dev in listOf("null", "zero", "random", "urandom")) {
-            val f = File(devDir, dev)
-            if (!f.exists()) {
-                try {
-                    f.writeText("")
-                } catch (_: Exception) {}
-            }
-        }
     }
 }

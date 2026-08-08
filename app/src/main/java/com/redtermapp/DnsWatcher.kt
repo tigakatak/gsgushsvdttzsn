@@ -17,9 +17,10 @@ import com.redtermapp.distro.DistroInstaller
  */
 object DnsWatcher {
     private const val TAG = "DnsWatcher"
-    private var registered = false
-    private var callback: ConnectivityManager.NetworkCallback? = null
-    private var lastKey = ""
+    @Volatile private var registered = false
+    @Volatile private var callback: ConnectivityManager.NetworkCallback? = null
+    @Volatile private var lastKey = ""
+    @Volatile private var refreshing = false
 
     fun start(context: Context) {
         if (registered) return
@@ -43,17 +44,21 @@ object DnsWatcher {
     }
 
     private fun refresh(context: Context) {
-        val dns = DnsHelper.getAndroidDnsServers(context).sorted().joinToString(",")
-        if (dns.isEmpty()) return
         synchronized(this) {
+            val dns = DnsHelper.getAndroidDnsServers(context).sorted().joinToString(",")
+            if (dns.isEmpty()) return
             if (dns == lastKey) return
+            if (refreshing) return
             lastKey = dns
+            refreshing = true
         }
         try {
             DistroInstaller(context).refreshDnsForAll()
-            Log.i(TAG, "Refreshed DNS for installed distros: $dns")
+            Log.i(TAG, "Refreshed DNS for installed distros")
         } catch (e: Exception) {
             Log.w(TAG, "DNS refresh failed", e)
+        } finally {
+            synchronized(this) { refreshing = false }
         }
     }
 }

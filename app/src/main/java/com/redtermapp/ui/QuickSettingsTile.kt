@@ -21,8 +21,8 @@ class QuickSettingsTile : TileService() {
 
     override fun onClick() {
         if (!isLocked) {
-            val prefs = getSharedPreferences("settings", android.content.Context.MODE_PRIVATE)
-            val last = prefs.getString("last_distro", null)
+            val prefs = prefs()
+            val last = prefs.getString(Prefs.KEY_LAST_DISTRO, null)
             val distros = DistroInstaller(this).getInstalledDistros()
             val distro = last ?: distros.firstOrNull()
             if (distro != null) {

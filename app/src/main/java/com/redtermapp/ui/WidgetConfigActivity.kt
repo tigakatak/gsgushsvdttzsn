@@ -28,17 +28,17 @@ class WidgetConfigActivity : Activity() {
         val distros = DistroInstaller(applicationContext).getInstalledDistros()
         val title = findViewById<TextView>(R.id.widget_config_title)
         val list = findViewById<ListView>(R.id.widget_config_list)
-        val prefs = getSharedPreferences("settings", MODE_PRIVATE)
+        val prefs = prefs()
         val current = prefs.getString("widget_distro_$widgetId", null)
 
         if (distros.isEmpty()) {
-            title.text = "No distros installed. Open RedTerm to install one."
+            android.widget.Toast.makeText(this, "No distros installed. Open RedTerm to install one.", android.widget.Toast.LENGTH_LONG).show()
             finish()
             return
         }
 
         title.text = "Pick a distro for this widget"
-        val names = distros.map { it.replaceFirstChar { c -> c.uppercase() } }.toTypedArray()
+        val names = distros.map { it.capitalized() }.toTypedArray()
         list.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, names)
         list.setOnItemClickListener { _, _, pos, _ ->
             prefs.edit().putString("widget_distro_$widgetId", distros[pos]).apply()

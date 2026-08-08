@@ -9,30 +9,26 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import com.google.android.material.card.MaterialCardView
 import com.redtermapp.R
 import com.redtermapp.distro.DistroInstaller
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
 
     private val installer by lazy { DistroInstaller(applicationContext) }
 
-    private val nightReceiver = object : android.content.BroadcastReceiver() {
-        override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
-            recreate()
-        }
-    }
+    private val nightReceiver = makeNightModeReceiver(this)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         AppTheme.apply(this)
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        androidx.core.content.ContextCompat.registerReceiver(
-            this, nightReceiver,
-            android.content.IntentFilter(NightModeReceiver.ACTION_CHANGED),
-            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
-        )
+        registerNightModeReceiver(nightReceiver)
 
         populateDistroList()
 
@@ -48,7 +44,7 @@ class MainActivity : AppCompatActivity() {
                 0 -> Toast.makeText(this, "No distros installed. Add one first.", Toast.LENGTH_SHORT).show()
                 1 -> TerminalActivity.launch(this, distros.first())
                 else -> {
-                    val names = distros.map { it.replaceFirstChar { c -> c.uppercase() } }.toTypedArray()
+                    val names = distros.map { it.capitalized() }.toTypedArray()
                     AlertDialog.Builder(this)
                         .setTitle("Select distro")
                         .setItems(names) { _, which ->
@@ -106,7 +102,7 @@ class MainActivity : AppCompatActivity() {
                         orientation = LinearLayout.VERTICAL
                         layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
                         addView(TextView(context).apply {
-                            text = name.replaceFirstChar { it.uppercase() }
+                            text = name.capitalized()
                             setTextColor(themeColor(R.attr.terminalText, 0xFFCDD6F4.toInt()))
                             textSize = 18f
                         })
@@ -126,7 +122,7 @@ class MainActivity : AppCompatActivity() {
     private fun showDistroMenu(name: String) {
         val items = arrayOf("Launch", "Backup now", "Home shortcut", "Reset to default", "Remove")
         AlertDialog.Builder(this)
-            .setTitle(name.replaceFirstChar { it.uppercase() })
+            .setTitle(name.capitalized())
             .setItems(items) { _, which ->
                 when (items[which]) {
                     "Launch" -> TerminalActivity.launch(this, name)
@@ -147,7 +143,7 @@ class MainActivity : AppCompatActivity() {
         }
         if (android.os.Build.VERSION.SDK_INT >= 26) {
             val info = androidx.core.content.pm.ShortcutInfoCompat.Builder(this, "launch_$name")
-                .setShortLabel(name.replaceFirstChar { it.uppercase() })
+                .setShortLabel(name.capitalized())
                 .setLongLabel("Open $name in RedTerm")
                 .setIcon(androidx.core.graphics.drawable.IconCompat.createWithResource(this, R.mipmap.ic_launcher))
                 .setIntent(intent)
@@ -157,7 +153,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             val addIntent = Intent("com.android.launcher.action.INSTALL_SHORTCUT").apply {
                 putExtra(Intent.EXTRA_SHORTCUT_INTENT, intent)
-                putExtra(Intent.EXTRA_SHORTCUT_NAME, name.replaceFirstChar { it.uppercase() })
+                putExtra(Intent.EXTRA_SHORTCUT_NAME, name.capitalized())
                 putExtra(
                     Intent.EXTRA_SHORTCUT_ICON_RESOURCE,
                     Intent.ShortcutIconResource.fromContext(this@MainActivity, R.mipmap.ic_launcher)
@@ -179,19 +175,19 @@ class MainActivity : AppCompatActivity() {
                     .setCancelable(false)
                     .show()
                 Thread {
-                    val ok = try {
-                        kotlinx.coroutines.runBlocking {
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        val ok = try {
                             installer.resetToDefault(name) { }
+                        } catch (e: Exception) {
+                            false
                         }
-                    } catch (e: Exception) {
-                        false
-                    }
-                    runOnUiThread {
-                        dialog.dismiss()
-                        if (ok) {
-                            Toast.makeText(this, "$name reset — next launch runs setup again", Toast.LENGTH_LONG).show()
-                        } else {
-                            Toast.makeText(this, "Reset failed. Check network and try again.", Toast.LENGTH_LONG).show()
+                        withContext(Dispatchers.Main) {
+                            dialog.dismiss()
+                            if (ok) {
+                                Toast.makeText(this@MainActivity, "$name reset - next launch runs setup again", Toast.LENGTH_LONG).show()
+                            } else {
+                                Toast.makeText(this@MainActivity, "Reset failed. Check network and try again.", Toast.LENGTH_LONG).show()
+                            }
                         }
                     }
                 }.start()
@@ -224,16 +220,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun confirmDelete(name: String) {
-        AlertDialog.Builder(this)
-            .setTitle("Remove $name?")
-            .setMessage("This will delete the rootfs, cached files and all data for $name, and kill any running session for it.")
-            .setPositiveButton("Delete") { _, _ ->
-                DistroUi.deleteDistro(this, installer, name)
-                populateDistroList()
-                Toast.makeText(this, "$name removed", Toast.LENGTH_SHORT).show()
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
+        DistroUi.confirmDelete(this, installer, name) { populateDistroList() }
     }
 
     override fun onResume() {

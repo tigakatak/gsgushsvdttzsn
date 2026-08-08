@@ -30,7 +30,7 @@ object AppTheme {
     }
 
     fun apply(activity: ComponentActivity) {
-        val prefs = activity.getSharedPreferences("settings", Context.MODE_PRIVATE)
+        val prefs = activity.prefs()
         val name = NightModeReceiver.effectiveTheme(prefs)
         val res = themeRes(name)
         activity.setTheme(res)
@@ -64,8 +64,7 @@ fun Context.themeColor(attr: Int, default: Int): Int {
 }
 
 fun Context.mutedTextColor(): Int = themeColor(R.attr.mutedText, 0xFF6C7086.toInt())
-fun Context.hintColor(): Int = themeColor(R.attr.hintText, 0x66CDD6F4.toInt())
-fun Context.dividerColor(): Int = themeColor(R.attr.dividerColor, 0xFF3A3A4C.toInt())
+fun Context.hintColor(): Int = themeColor(R.attr.hintText, 0xFFCDD6F4.toInt())
 fun Context.modifierHighlightColor(): Int = themeColor(R.attr.modifierHighlight, 0xFF45475A.toInt())
 
 fun Context.customFontFiles(): List<File> =

@@ -117,14 +117,9 @@ public final class TerminalRenderer {
                     } else {
                         final int columnWidthSinceLastRun = column - lastRunStartColumn;
                         final int charsSinceLastRun = currentCharIndex - lastRunStartIndex;
-                        int cursorColor = lastRunInsideCursor ? mEmulator.mColors.mCurrentColors[TextStyle.COLOR_INDEX_CURSOR] : 0;
-                        boolean invertCursorTextColor = false;
-                        if (lastRunInsideCursor && cursorShape == TerminalEmulator.TERMINAL_CURSOR_STYLE_BLOCK) {
-                            invertCursorTextColor = true;
-                        }
-                        drawTextRun(canvas, line, palette, heightOffset, lastRunStartColumn, columnWidthSinceLastRun,
+                        drawTextRunWithCursor(canvas, line, palette, heightOffset, lastRunStartColumn, columnWidthSinceLastRun,
                             lastRunStartIndex, charsSinceLastRun, measuredWidthForRun,
-                            cursorColor, cursorShape, lastRunStyle, reverseVideo || invertCursorTextColor || lastRunInsideSelection);
+                            cursorShape, lastRunInsideCursor, lastRunStyle, reverseVideo || lastRunInsideSelection);
                     }
                     measuredWidthForRun = 0.f;
                     lastRunStyle = style;
@@ -146,14 +141,18 @@ public final class TerminalRenderer {
 
             final int columnWidthSinceLastRun = columns - lastRunStartColumn;
             final int charsSinceLastRun = currentCharIndex - lastRunStartIndex;
-            int cursorColor = lastRunInsideCursor ? mEmulator.mColors.mCurrentColors[TextStyle.COLOR_INDEX_CURSOR] : 0;
-            boolean invertCursorTextColor = false;
-            if (lastRunInsideCursor && cursorShape == TerminalEmulator.TERMINAL_CURSOR_STYLE_BLOCK) {
-                invertCursorTextColor = true;
-            }
-            drawTextRun(canvas, line, palette, heightOffset, lastRunStartColumn, columnWidthSinceLastRun, lastRunStartIndex, charsSinceLastRun,
-                measuredWidthForRun, cursorColor, cursorShape, lastRunStyle, reverseVideo || invertCursorTextColor || lastRunInsideSelection);
+            drawTextRunWithCursor(canvas, line, palette, heightOffset, lastRunStartColumn, columnWidthSinceLastRun, lastRunStartIndex, charsSinceLastRun,
+                measuredWidthForRun, cursorShape, lastRunInsideCursor, lastRunStyle, reverseVideo || lastRunInsideSelection);
         }
+    }
+
+    private void drawTextRunWithCursor(Canvas canvas, char[] text, int[] palette, float y, int startColumn, int runWidthColumns,
+                                       int startCharIndex, int runWidthChars, float mes, int cursorStyle,
+                                       boolean insideCursor, long textStyle, boolean reverseVideo) {
+        int cursorColor = insideCursor ? palette[TextStyle.COLOR_INDEX_CURSOR] : 0;
+        boolean invertCursorTextColor = insideCursor && cursorStyle == TerminalEmulator.TERMINAL_CURSOR_STYLE_BLOCK;
+        drawTextRun(canvas, text, palette, y, startColumn, runWidthColumns, startCharIndex, runWidthChars, mes,
+            cursorColor, cursorStyle, textStyle, reverseVideo || invertCursorTextColor);
     }
 
     private void drawTextRun(Canvas canvas, char[] text, int[] palette, float y, int startColumn, int runWidthColumns,

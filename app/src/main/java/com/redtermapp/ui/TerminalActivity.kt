@@ -12,7 +12,6 @@ import android.view.KeyEvent
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
-import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -68,11 +67,7 @@ class TerminalActivity : AppCompatActivity() {
     private val sessions: List<TerminalSession> get() = sessionModel.sessions.value
     private val currentIndex: Int get() = sessionModel.currentIndex.value
 
-    private val nightReceiver = object : android.content.BroadcastReceiver() {
-        override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
-            recreate()
-        }
-    }
+    private val nightReceiver = makeNightModeReceiver(this)
 
     private fun wireBackend(backend: TerminalBackend) {
         backend.onSessionFinished = { finishedSession -> handleSessionFinished(finishedSession) }
@@ -132,8 +127,8 @@ class TerminalActivity : AppCompatActivity() {
         }
 
         distroName = intent?.getStringExtra(EXTRA_DISTRO) ?: "alpine"
-        getSharedPreferences("settings", MODE_PRIVATE)
-            .edit().putString("last_distro", distroName).apply()
+        prefs()
+            .edit().putString(Prefs.KEY_LAST_DISTRO, distroName).apply()
         terminalView = findViewById(R.id.terminal_view)
         drawerLayout = findViewById(R.id.drawer_layout)
         sessionListContainer = findViewById(R.id.session_list_container)
@@ -143,7 +138,7 @@ class TerminalActivity : AppCompatActivity() {
         setupExtraKeysRow1()
         setupExtraKeysRow2()
 
-        val prefs = getSharedPreferences("settings", MODE_PRIVATE)
+        val prefs = prefs()
 
         val rootfsDir = DistroInstaller(applicationContext).getRootfsDir(distroName)
         val sizeLabel = findViewById<TextView>(R.id.distro_size_label)
@@ -162,11 +157,7 @@ class TerminalActivity : AppCompatActivity() {
             createNewSession()
         }
 
-        androidx.core.content.ContextCompat.registerReceiver(
-            this, nightReceiver,
-            android.content.IntentFilter(NightModeReceiver.ACTION_CHANGED),
-            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
-        )
+        registerNightModeReceiver(nightReceiver)
         sweepStaleLaunchScripts()
         if (sessions.isEmpty()) {
             createNewSession()
@@ -183,7 +174,8 @@ class TerminalActivity : AppCompatActivity() {
             terminalView.setTextSize(currentFontSize)
             applyFontFromPrefs(prefs)
             terminalView.setBackgroundColor(themeColor(R.attr.terminalBg, 0xFF1E1E2E.toInt()))
-            terminalView.attachSession(sessions[currentIndex])
+            val safeIdx = currentIndex.coerceIn(0, sessions.lastIndex)
+            terminalView.attachSession(sessions[safeIdx])
             terminalView.onScreenUpdated()
             terminalView.post {
                 terminalView.requestFocus()
@@ -212,8 +204,8 @@ class TerminalActivity : AppCompatActivity() {
         val repeatable = isRepeatableKey(label)
         val isSymbol = label.length == 1 && !label[0].isLetterOrDigit()
         val handler = if (repeatable) android.os.Handler(android.os.Looper.getMainLooper()) else null
-        val initialDelay = 400L
-        val repeatDelay = 80L
+        val initialDelay = Prefs.KEY_REPEAT_INITIAL_DELAY
+        val repeatDelay = Prefs.KEY_REPEAT_DELAY
         val repeatRunnable = object : Runnable {
             override fun run() {
                 action()
@@ -263,7 +255,7 @@ class TerminalActivity : AppCompatActivity() {
     }
 
     private fun extraKeyLabels(): Pair<List<String>, List<String>> {
-        val prefs = getSharedPreferences("settings", MODE_PRIVATE)
+        val prefs = prefs()
         val d1 = "\u2630 ESC \u25B2 \u2014 /"
         val d2 = "TAB \u25C0 \u25BC \u25B6 CTRL"
         val split = { s: String -> s.trim().split(Regex("\\s+")).filter { it.isNotEmpty() } }
@@ -379,12 +371,6 @@ class TerminalActivity : AppCompatActivity() {
         ViewCompat.requestApplyInsets(rootView)
     }
 
-    private fun hideKeyboard() {
-        val imm = getSystemService(InputMethodManager::class.java) ?: return
-        val token = currentFocus?.windowToken ?: window.decorView.windowToken
-        imm.hideSoftInputFromWindow(token, 0)
-    }
-
     private fun toggleSessionsPanel() {
         val panel = findViewById<LinearLayout>(R.id.sessions_panel)
         panel.visibility = if (panel.visibility == android.view.View.VISIBLE) android.view.View.GONE else android.view.View.VISIBLE
@@ -403,7 +389,7 @@ class TerminalActivity : AppCompatActivity() {
     }
 
     private fun updateExtraKeysVisibility() {
-        val prefs = getSharedPreferences("settings", MODE_PRIVATE)
+        val prefs = prefs()
         toggleExtraKeys(
             if (prefs.getBoolean("autohide_keys", false)) lastImeVisible else true
         )
@@ -487,8 +473,8 @@ fi
     }
 
     private fun createNewSession() {
-        val prefs = getSharedPreferences("settings", MODE_PRIVATE)
-        val scrollback = intArrayOf(500, 1000, 2000, 3000, 5000, 7500, 10000, 15000, 20000, 30000)[prefs.getInt("scrollback", 2).coerceIn(0, 9)]
+        val prefs = prefs()
+        val scrollback = Prefs.SCROLLBACK_ROWS[prefs.getInt(Prefs.KEY_SCROLLBACK, Prefs.SCROLLBACK_DEFAULT).coerceIn(0, 9)]
         val rootfsDir = DistroInstaller(applicationContext).getRootfsDir(distroName)
         if (!rootfsDir.exists()) {
             showError("Distro $distroName not installed.\nRun installer first.")
@@ -533,7 +519,7 @@ fi
             val ldr32 = if (File(prootLoader32).exists()) "export PROOT_LOADER_32=$prootLoader32\n" else ""
             val rp = rootfsDir.absolutePath
             val startHost = filesDir.absolutePath
-            val sessionId = java.util.UUID.randomUUID().toString().replace("-", "").take(16)
+            val sessionId = java.util.UUID.randomUUID().toString().replace("-", "").take(Prefs.SESSION_ID_LENGTH)
             val launchSh = File(filesDir, "launch_$sessionId.sh")
             launchSh.parentFile?.mkdirs()
             val tz = java.util.TimeZone.getDefault().id
@@ -547,14 +533,14 @@ export TMPDIR=/tmp
 export PATH=/system/bin:/system/xbin:/bin:/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
 export ENV=/root/.startup
 # Libuv (Node.js / opencode) I/O concurrency. Inherited by the guest shell.
-export UV_THREADPOOL_SIZE=16
+export UV_THREADPOOL_SIZE=${Prefs.UV_THREADPOOL_SIZE}
 export PROOT_LOADER=$prootLoader
 ${ldr32}export PROOT_TMP_DIR=$rp/tmp
 mkdir -p "$rp/tmp" "$rp/dev/shm" "$rp/run/shm"
 # Raise soft resource limits so heavy programs (compilers, AI CLIs, servers)
 # get enough file descriptors and processes. Silently no-ops if already higher.
-ulimit -n 65536 2>/dev/null
-ulimit -u 65536 2>/dev/null
+ulimit -n ${Prefs.ULIMIT_NOFILE} 2>/dev/null
+ulimit -u ${Prefs.ULIMIT_NPROC} 2>/dev/null
 exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd --kill-on-exit \
     -b /dev -b /proc -b /sys -b /system -b /apex -b /linkerconfig/ld.config.txt \
     -b /sdcard -b /storage -b /mnt \
@@ -602,7 +588,6 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
         terminalView.onScreenUpdated()
         updateDrawer()
     }
-
     private fun handleSessionFinished(finishedSession: TerminalSession) {
         val idx = sessions.indexOf(finishedSession)
         if (idx < 0) return
@@ -614,7 +599,8 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
         if (sessions.isEmpty()) {
             finish()
         } else {
-            terminalView.attachSession(sessions[currentIndex])
+            val safeIdx = currentIndex.coerceIn(0, sessions.lastIndex)
+            terminalView.attachSession(sessions[safeIdx])
             terminalView.onScreenUpdated()
             updateDrawer()
         }
@@ -678,7 +664,7 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
             view.onScreenUpdated()
             view.setTextSize(currentFontSize)
             view.setBackgroundColor(bg)
-            applyFontToView(view, getSharedPreferences("settings", MODE_PRIVATE))
+            applyFontToView(view, prefs())
         }
         left.requestFocus()
         updateSplitButton()
@@ -697,7 +683,7 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
         }
         container.visibility = View.GONE
         terminalView.visibility = View.VISIBLE
-        if (sessions.isNotEmpty()) {
+        if (sessions.isNotEmpty() && currentIndex in sessions.indices) {
             terminalView.attachSession(sessions[currentIndex])
             terminalView.onScreenUpdated()
         }
@@ -733,7 +719,7 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
     private fun closeSession(index: Int) {
         if (sessions.size <= 1) return
         sessionModel.removeSession(index)
-        if (currentIndex >= 0) {
+        if (currentIndex in sessions.indices) {
             terminalView.attachSession(sessions[currentIndex])
             terminalView.onScreenUpdated()
         }
@@ -910,9 +896,9 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
     override fun onResume() {
         super.onResume()
         if (!com.redtermapp.util.StoragePermission.isAccessible(this)) {
-            val prefs = getSharedPreferences("settings", MODE_PRIVATE)
+            val prefs = prefs()
             val lastAsk = prefs.getLong("storage_ask_time", 0L)
-            if (System.currentTimeMillis() - lastAsk > 8000) {
+            if (System.currentTimeMillis() - lastAsk > Prefs.PERMISSION_ASK_THROTTLE_MS) {
                 prefs.edit().putLong("storage_ask_time", System.currentTimeMillis()).apply()
                 com.redtermapp.util.StoragePermission.requestAccess(this)
             }
@@ -934,7 +920,7 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
             if (target >= 0) {
                 sessionModel.switchToSession(target)
                 terminalView.attachSession(sessions[target])
-            } else {
+            } else if (currentIndex in sessions.indices) {
                 terminalView.attachSession(sessions[currentIndex])
             }
             terminalView.onScreenUpdated()
@@ -947,6 +933,7 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
         unregisterReceiver(nightReceiver)
         if (sessions.isEmpty()) {
             stopService(Intent(this, TerminalService::class.java))
+            TerminalViewModel.clearIfEmpty()
         }
         terminalBackend?.onSessionFinished = null
         terminalBackend = null
@@ -954,15 +941,17 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
     }
 
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
-        if (ev.action == android.view.MotionEvent.ACTION_DOWN && ev.y < 100 && ev.rawY < 400) {
-            val prefs = getSharedPreferences("settings", MODE_PRIVATE)
+        if (ev.action == android.view.MotionEvent.ACTION_DOWN && ev.y < dp(40) && ev.rawY < dp(120)) {
+            val prefs = prefs()
             if (prefs.getBoolean("autohide_keys", false)) {
                 updateExtraKeysVisibility()
             }
             toggleQuickPanel()
         }
         return super.dispatchTouchEvent(ev)
-    }    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (currentIndex !in sessions.indices) return super.dispatchKeyEvent(event)
         val hadModifier = ctrlActive || altActive
         @Suppress("DEPRECATION")
@@ -996,16 +985,11 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
         menu.add(0, 4, 0, "Font -")
         menu.add(0, 5, 0, "Reset")
         val fontSub = menu.addSubMenu(0, 7, 0, "Fonts")
-        fontSub.add(0, 71, 0, "JetBrains Mono")
-        fontSub.add(0, 72, 0, "Fira Code")
-        fontSub.add(0, 73, 0, "Source Code Pro")
-        fontSub.add(0, 74, 0, "Ubuntu Mono")
-        fontSub.add(0, 75, 0, "monospace")
-        fontSub.add(0, 76, 0, "Droid Sans Mono")
-        fontSub.add(0, 77, 0, "Noto Sans Mono")
-        fontSub.add(0, 78, 0, "Cascadia Code")
+        for ((id, name) in Prefs.FONT_MENU_IDS) {
+            fontSub.add(0, id, 0, name)
+        }
         customFontFiles().forEachIndexed { i, f ->
-            fontSub.add(0, 100 + i, 0, "${f.name.removeSuffix(".ttf").removeSuffix(".TTF").removeSuffix(".otf").removeSuffix(".OTF")} (custom)")
+            fontSub.add(0, Prefs.CUSTOM_FONT_MENU_BASE + i, 0, "${fontDisplayName(f.name)} (custom)")
         }
 
         val themeSub = menu.addSubMenu(0, 6, 0, "Theme")
@@ -1035,7 +1019,7 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
     }
 
     private fun resolveTerminalColors(): Triple<Int, Int, Int> {
-        val prefs = getSharedPreferences("settings", MODE_PRIVATE)
+        val prefs = prefs()
         val themeName = prefs.getString("theme", "amoled") ?: "amoled"
         val dynamic = if (themeName == "dynamic") dynamicTerminalColors() else null
         val bg = when {
@@ -1067,7 +1051,7 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
     }
 
     private fun applyTerminalTheme(themeName: String) {
-        val prefs = getSharedPreferences("settings", MODE_PRIVATE)
+        val prefs = prefs()
         prefs.edit().putString("theme", themeName).apply()
         NightModeReceiver.notifyChanged(this, prefs)
         val (bg, extraBg, textColor) = resolveTerminalColors()
@@ -1166,7 +1150,7 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
     }
 
     override fun onContextItemSelected(item: MenuItem): Boolean {
-        val prefs = getSharedPreferences("settings", android.content.Context.MODE_PRIVATE)
+        val prefs = prefs()
         return when (item.itemId) {
             12 -> { copySelectedText(); true }
             13 -> { pasteClipboard(); true }
@@ -1185,24 +1169,16 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
               67 -> { applyTerminalTheme("gruvbox"); true }
                70 -> { applyTerminalTheme("custom"); true }
                79 -> { applyTerminalTheme("dynamic"); true }
-               71 -> { prefs.edit().putString("font", "JetBrains Mono").apply(); applyFontFromPrefs(prefs); true }
-              72 -> { prefs.edit().putString("font", "Fira Code").apply(); applyFontFromPrefs(prefs); true }
-              73 -> { prefs.edit().putString("font", "Source Code Pro").apply(); applyFontFromPrefs(prefs); true }
-              74 -> { prefs.edit().putString("font", "Ubuntu Mono").apply(); applyFontFromPrefs(prefs); true }
-              75 -> { prefs.edit().putString("font", "monospace").apply(); applyFontFromPrefs(prefs); true }
-              76 -> { prefs.edit().putString("font", "Droid Sans Mono").apply(); applyFontFromPrefs(prefs); true }
-              77 -> { prefs.edit().putString("font", "Noto Sans Mono").apply(); applyFontFromPrefs(prefs); true }
-               78 -> { prefs.edit().putString("font", "Cascadia Code").apply(); applyFontFromPrefs(prefs); true }
-               100 -> { prefs.edit().putString("font", "custom:${customFontFiles().getOrNull(0)?.name ?: ""}").apply(); applyFontFromPrefs(prefs); true }
-               101 -> { prefs.edit().putString("font", "custom:${customFontFiles().getOrNull(1)?.name ?: ""}").apply(); applyFontFromPrefs(prefs); true }
-               102 -> { prefs.edit().putString("font", "custom:${customFontFiles().getOrNull(2)?.name ?: ""}").apply(); applyFontFromPrefs(prefs); true }
-               103 -> { prefs.edit().putString("font", "custom:${customFontFiles().getOrNull(3)?.name ?: ""}").apply(); applyFontFromPrefs(prefs); true }
-               104 -> { prefs.edit().putString("font", "custom:${customFontFiles().getOrNull(4)?.name ?: ""}").apply(); applyFontFromPrefs(prefs); true }
-               105 -> { prefs.edit().putString("font", "custom:${customFontFiles().getOrNull(5)?.name ?: ""}").apply(); applyFontFromPrefs(prefs); true }
-               106 -> { prefs.edit().putString("font", "custom:${customFontFiles().getOrNull(6)?.name ?: ""}").apply(); applyFontFromPrefs(prefs); true }
-               107 -> { prefs.edit().putString("font", "custom:${customFontFiles().getOrNull(7)?.name ?: ""}").apply(); applyFontFromPrefs(prefs); true }
-               108 -> { prefs.edit().putString("font", "custom:${customFontFiles().getOrNull(8)?.name ?: ""}").apply(); applyFontFromPrefs(prefs); true }
-               109 -> { prefs.edit().putString("font", "custom:${customFontFiles().getOrNull(9)?.name ?: ""}").apply(); applyFontFromPrefs(prefs); true }
+               in Prefs.FONT_MENU_IDS.map { it.first } -> {
+                   val fontName = Prefs.FONT_MENU_IDS.first { it.first == item.itemId }.second
+                   prefs.edit().putString(Prefs.KEY_FONT, fontName).apply(); applyFontFromPrefs(prefs); true
+               }
+                in Prefs.CUSTOM_FONT_MENU_BASE..(Prefs.CUSTOM_FONT_MENU_BASE + 999) -> {
+                    val fontIdx = item.itemId - Prefs.CUSTOM_FONT_MENU_BASE
+                    val fontName = customFontFiles().getOrNull(fontIdx)?.name ?: ""
+                    prefs.edit().putString("font", "custom:$fontName").apply()
+                    applyFontFromPrefs(prefs); true
+                }
                  9 -> { showSnippetsDialog(); true }
                  10 -> { toggleQuickPanel(); true }
                  11 -> { toggleSplit(); true }
@@ -1237,15 +1213,9 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
                 } catch (_: Exception) {
                     null
                 }
-            else -> when (fontName) {
-                "JetBrains Mono" -> loadFont("fonts/JetBrainsMono.ttf")
-                "Fira Code" -> loadFont("fonts/FiraCode.ttf")
-                "Source Code Pro" -> loadFont("fonts/SourceCodePro.ttf")
-                "Ubuntu Mono" -> loadFont("fonts/UbuntuMono.ttf")
-                "Droid Sans Mono" -> loadFont("fonts/DroidSansMono.ttf")
-                "Noto Sans Mono" -> loadFont("fonts/NotoSansMono.ttf")
-                "Cascadia Code" -> loadFont("fonts/CascadiaCode.ttf")
-                else -> android.graphics.Typeface.MONOSPACE
+            else -> {
+                val asset = Prefs.FONT_ASSET_MAP[fontName]
+                if (asset != null) loadFont(asset) else android.graphics.Typeface.MONOSPACE
             }
         }
         return tf ?: android.graphics.Typeface.MONOSPACE
@@ -1257,7 +1227,7 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
 
     private fun applyTheme() {
         AppTheme.apply(this)
-        val prefs = getSharedPreferences("settings", android.content.Context.MODE_PRIVATE)
+        val prefs = prefs()
         if (NightModeReceiver.effectiveTheme(prefs) == "dynamic" && android.os.Build.VERSION.SDK_INT >= 31) {
             try {
                 com.google.android.material.color.DynamicColors.applyToActivityIfAvailable(this)
@@ -1266,15 +1236,19 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
     }
 
     private fun showSnippetsDialog() {
-        val prefs = getSharedPreferences("settings", MODE_PRIVATE)
-        val json = prefs.getString("snippets", "[]") ?: "[]"
-        val arr = org.json.JSONArray(json)
+        val prefs = prefs()
         val names = mutableListOf<String>()
         val contents = mutableListOf<String>()
-        for (i in 0 until arr.length()) {
-            val obj = arr.getJSONObject(i)
-            names.add(obj.getString("name"))
-            contents.add(obj.getString("content"))
+        try {
+            val json = prefs.getString(Prefs.KEY_SNIPPETS, "[]") ?: "[]"
+            val arr = org.json.JSONArray(json)
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                names.add(obj.getString("name"))
+                contents.add(obj.getString("content"))
+            }
+        } catch (e: org.json.JSONException) {
+            android.util.Log.w("TerminalActivity", "Malformed snippets pref", e)
         }
 
         val items = if (names.isEmpty()) arrayOf("(no snippets — tap + to add)") else names.toTypedArray()
@@ -1325,23 +1299,32 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
     }
 
     private fun saveSnippet(name: String, content: String) {
-        val prefs = getSharedPreferences("settings", MODE_PRIVATE)
-        val json = prefs.getString("snippets", "[]") ?: "[]"
-        val arr = org.json.JSONArray(json)
+        val prefs = prefs()
+        val arr = try {
+            org.json.JSONArray(prefs.getString(Prefs.KEY_SNIPPETS, "[]") ?: "[]")
+        } catch (e: org.json.JSONException) {
+            org.json.JSONArray()
+        }
         val obj = org.json.JSONObject()
         obj.put("name", name)
         obj.put("content", content)
         arr.put(obj)
-        prefs.edit().putString("snippets", arr.toString()).apply()
+        prefs.edit().putString(Prefs.KEY_SNIPPETS, arr.toString()).apply()
     }
 
     private fun showEditSnippetsDialog() {
-        val prefs = getSharedPreferences("settings", MODE_PRIVATE)
-        val json = prefs.getString("snippets", "[]") ?: "[]"
-        val arr = org.json.JSONArray(json)
+        val prefs = prefs()
+        val arr = try {
+            org.json.JSONArray(prefs.getString(Prefs.KEY_SNIPPETS, "[]") ?: "[]")
+        } catch (e: org.json.JSONException) {
+            android.widget.Toast.makeText(this, "No snippets to edit", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
         val names = mutableListOf<String>()
         for (i in 0 until arr.length()) {
-            names.add(arr.getJSONObject(i).getString("name"))
+            try {
+                names.add(arr.getJSONObject(i).getString("name"))
+            } catch (_: org.json.JSONException) {}
         }
 
         if (names.isEmpty()) {

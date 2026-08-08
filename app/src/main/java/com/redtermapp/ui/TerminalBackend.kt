@@ -25,8 +25,6 @@ class TerminalBackend(
 
     private var ctrlDown = false
     private var altDown = false
-    private var shiftDown = false
-    private var fnDown = false
     private var fontSize = 14f
     var onSessionFinished: ((TerminalSession) -> Unit)? = null
     var onTap: (() -> Unit)? = null
@@ -113,17 +111,11 @@ class TerminalBackend(
         val col = colRow[0]
         val row = colRow[1]
         val buffer = emu.getScreen()
-        val internal = try {
-            buffer.externalToInternalRow(row)
+        val line = try {
+            buffer.getSelectedText(0, row, emu.mColumns, row)
         } catch (_: Exception) {
             return null
         }
-        val terminalRow = try {
-            buffer.allocateFullLineIfNecessary(internal)
-        } catch (_: Exception) {
-            return null
-        }
-        val line = String(terminalRow.mText, 0, terminalRow.getSpaceUsed())
         for (m in urlRegex.findAll(line)) {
             if (col in m.range) return m.value to false
         }
@@ -173,8 +165,8 @@ class TerminalBackend(
 
     override fun readControlKey(): Boolean = ctrlDown
     override fun readAltKey(): Boolean = altDown
-    override fun readShiftKey(): Boolean = shiftDown
-    override fun readFnKey(): Boolean = fnDown
+    override fun readShiftKey(): Boolean = false
+    override fun readFnKey(): Boolean = false
 
     fun setCtrl(v: Boolean) { ctrlDown = v }
     fun setAlt(v: Boolean) { altDown = v }
@@ -191,10 +183,7 @@ class TerminalBackend(
     }
 
     override fun logError(tag: String, message: String) { Log.e(tag, message) }
-    override fun logWarn(tag: String, message: String) { Log.w(tag, message) }
     override fun logInfo(tag: String, message: String) { Log.i(tag, message) }
-    override fun logDebug(tag: String, message: String) { Log.d(tag, message) }
     override fun logVerbose(tag: String, message: String) { Log.v(tag, message) }
     override fun logStackTraceWithMessage(tag: String, message: String, e: Exception) { Log.e(tag, message, e) }
-    override fun logStackTrace(tag: String, e: Exception) { Log.e(tag, "stacktrace", e) }
 }

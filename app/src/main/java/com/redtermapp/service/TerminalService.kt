@@ -8,13 +8,14 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
-import android.os.Process
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.redtermapp.R
 import com.redtermapp.RedTermApp
 import com.redtermapp.ui.AppTheme
+import com.redtermapp.ui.Prefs
 import com.redtermapp.ui.TerminalActivity
+import com.redtermapp.ui.prefs
 import java.io.File
 
 class TerminalService : Service() {
@@ -24,6 +25,15 @@ class TerminalService : Service() {
         const val ACTION_RELEASE = "com.redtermapp.action.RELEASE_WAKELOCK"
         const val ACTION_EXIT = "com.redtermapp.action.EXIT"
         const val ACTION_STOP = "com.redtermapp.action.STOP"
+
+        private fun terminalPendingIntent(context: Context): PendingIntent =
+            PendingIntent.getActivity(
+                context, 0,
+                Intent(context, TerminalActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
     }
 
     private var wakeLock: PowerManager.WakeLock? = null
@@ -31,13 +41,7 @@ class TerminalService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        val pendingIntent = PendingIntent.getActivity(
-            this, 0,
-            Intent(this, TerminalActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            },
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+        val pendingIntent = terminalPendingIntent(this)
         val notif = NotificationCompat.Builder(this, RedTermApp.CHANNEL_TERMINAL)
             .setContentTitle("RedTerm")
             .setContentText("Starting...")
@@ -63,9 +67,9 @@ class TerminalService : Service() {
                 updateNotification()
             }
             ACTION_EXIT -> {
+                releaseWakeLock()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
-                Process.killProcess(Process.myPid())
             }
             ACTION_STOP -> {
                 releaseWakeLock()
@@ -73,8 +77,8 @@ class TerminalService : Service() {
                 stopSelf()
             }
             else -> {
-                val prefs = getSharedPreferences("settings", Context.MODE_PRIVATE)
-                val wakelockEnabled = prefs.getBoolean("wakelock", false)
+                val prefs = prefs()
+                val wakelockEnabled = prefs.getBoolean(Prefs.KEY_WAKELOCK, false)
                 if (wakelockEnabled) acquireWakeLock() else releaseWakeLock()
                 updateNotification()
             }
@@ -134,13 +138,7 @@ class TerminalService : Service() {
     }
 
     private fun updateNotification() {
-        val pendingIntent = PendingIntent.getActivity(
-            this, 0,
-            Intent(this, TerminalActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            },
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+        val pendingIntent = terminalPendingIntent(this)
 
         val isHeld = wakeLock?.isHeld == true
         val wakelockStatus = if (isHeld) "\u25CF" else "\u25CB"
@@ -182,14 +180,14 @@ class TerminalService : Service() {
     }
 
     private fun getDistroName(): String {
-        val prefs = getSharedPreferences("settings", Context.MODE_PRIVATE)
-        prefs.getString("last_distro", null)?.let { return it.replaceFirstChar { c -> c.uppercase() } }
+        val prefs = prefs()
+        prefs.getString(Prefs.KEY_LAST_DISTRO, null)?.let { return it.capitalized() }
         val dir = File(filesDir, "installed")
-        return dir.list()?.sorted()?.firstOrNull()?.replaceFirstChar { it.uppercase() } ?: "Terminal"
+        return dir.list()?.sorted()?.firstOrNull()?.capitalized() ?: "Terminal"
     }
 
     private fun themeAccent(): Int {
-        val prefs = getSharedPreferences("settings", Context.MODE_PRIVATE)
+        val prefs = prefs()
         return AppTheme.resolveThemeColor(this, prefs, R.attr.themeAccent, 0xFF89B4FA.toInt())
     }
 }

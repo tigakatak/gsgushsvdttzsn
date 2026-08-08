@@ -64,6 +64,10 @@ public class TextSelectionHandleView extends View {
     }
 
     private void initHandle() {
+        if (mHandle != null) {
+            mHandle.dismiss();
+            removeFromParent();
+        }
         mHandle = new PopupWindow(terminalView.getContext(), null,
             android.R.attr.textSelectHandleWindowStyle);
         mHandle.setSplitTouchEnabled(true);
@@ -195,6 +199,21 @@ public class TextSelectionHandleView extends View {
         }
     }
 
+    private Rect getClipRect() {
+        final TerminalView hostView = terminalView;
+        final int right = hostView.getWidth();
+        final int bottom = hostView.getHeight();
+        if (mTempRect == null) {
+            mTempRect = new Rect();
+        }
+        final Rect clip = mTempRect;
+        clip.left = terminalView.getPaddingLeft();
+        clip.top = terminalView.getPaddingTop();
+        clip.right = right - terminalView.getPaddingRight();
+        clip.bottom = bottom - terminalView.getPaddingBottom();
+        return clip;
+    }
+
     private void checkChangedOrientation(int posX, boolean force) {
         if (!mIsDragging && !force) {
             return;
@@ -206,19 +225,7 @@ public class TextSelectionHandleView extends View {
         mLastTime = millis;
 
         final TerminalView hostView = terminalView;
-        final int left = hostView.getLeft();
-        final int right = hostView.getWidth();
-        final int top = hostView.getTop();
-        final int bottom = hostView.getHeight();
-
-        if (mTempRect == null) {
-            mTempRect = new Rect();
-        }
-        final Rect clip = mTempRect;
-        clip.left = left + terminalView.getPaddingLeft();
-        clip.top = top + terminalView.getPaddingTop();
-        clip.right = right - terminalView.getPaddingRight();
-        clip.bottom = bottom - terminalView.getPaddingBottom();
+        final Rect clip = getClipRect();
 
         final ViewParent parent = hostView.getParent();
         if (parent == null || !parent.getChildVisibleRect(hostView, clip, null)) {
@@ -235,25 +242,12 @@ public class TextSelectionHandleView extends View {
     }
 
     private boolean isPositionVisible() {
-        // Always show a dragging handle.
         if (mIsDragging) {
             return true;
         }
 
         final TerminalView hostView = terminalView;
-        final int left = 0;
-        final int right = hostView.getWidth();
-        final int top = 0;
-        final int bottom = hostView.getHeight();
-
-        if (mTempRect == null) {
-            mTempRect = new Rect();
-        }
-        final Rect clip = mTempRect;
-        clip.left = left + terminalView.getPaddingLeft();
-        clip.top = top + terminalView.getPaddingTop();
-        clip.right = right - terminalView.getPaddingRight();
-        clip.bottom = bottom - terminalView.getPaddingBottom();
+        final Rect clip = getClipRect();
 
         final ViewParent parent = hostView.getParent();
         if (parent == null || !parent.getChildVisibleRect(hostView, clip, null)) {
@@ -321,10 +315,6 @@ public class TextSelectionHandleView extends View {
 
     public int getHandleHeight() {
         return mHandleHeight;
-    }
-
-    public int getHandleWidth() {
-        return mHandleWidth;
     }
 
     public boolean isShowing() {

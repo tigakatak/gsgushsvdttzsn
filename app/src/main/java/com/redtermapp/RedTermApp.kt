@@ -5,6 +5,8 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
 import com.google.android.material.color.DynamicColors
+import com.redtermapp.ui.NightModeReceiver
+import com.redtermapp.ui.Prefs
 import com.redtermapp.util.CrashHandler
 
 class RedTermApp : Application() {
@@ -13,6 +15,10 @@ class RedTermApp : Application() {
         DynamicColors.applyToActivitiesIfAvailable(this)
         CrashHandler.init(this)
         DnsWatcher.start(this)
+        val prefs = getSharedPreferences(Prefs.NAME, android.content.Context.MODE_PRIVATE)
+        if (prefs.getBoolean(Prefs.KEY_AUTO_NIGHT, false)) {
+            NightModeReceiver.scheduleNightMode(this, prefs)
+        }
         if (BuildConfig.DEBUG) {
             android.os.StrictMode.setThreadPolicy(
                 android.os.StrictMode.ThreadPolicy.Builder()

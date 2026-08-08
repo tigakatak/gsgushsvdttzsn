@@ -14,12 +14,10 @@ object CrashHandler {
     fun init(context: Context) {
         if (enabled) return
         enabled = true
-        // Write crash logs to the app's external files dir so they can be pulled
-        // via a file manager (Android/data/com.redtermapp/files/crash/). Fall
-        // back to the private files dir if external storage is unavailable.
         val base = context.getExternalFilesDir(null) ?: context.filesDir
         val crashDir = File(base, "crash")
         crashDir.mkdirs()
+        val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             val dateStr = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
             val file = File(crashDir, "crash_$dateStr.log")
@@ -29,22 +27,27 @@ object CrashHandler {
                     writer.write("Thread: ${thread.name} (${thread.id})\n")
                     writer.write("Message: ${throwable.message}\n\n")
                     writer.write("Stack trace:\n")
-                    for (element in throwable.stackTrace) {
-                        writer.write("\tat ${element.toString()}\n")
-                    }
-                    if (throwable.cause != null) {
-                        writer.write("\nCaused by: ${throwable.cause}\n")
-                        for (element in throwable.cause!!.stackTrace) {
-                            writer.write("\tat ${element.toString()}\n")
-                        }
-                    }
+                    writeStackTrace(writer, throwable, 0)
                 }
             } catch (e: Exception) {
                 Log.e("CrashHandler", "Failed to write crash log", e)
             }
             Log.e("CrashHandler", "Uncaught exception in ${thread.name}", throwable)
+            previousHandler?.uncaughtException(thread, throwable)
             android.os.Process.killProcess(android.os.Process.myPid())
             System.exit(1)
+        }
+    }
+
+    private fun writeStackTrace(writer: java.io.Writer, throwable: Throwable, depth: Int) {
+        if (depth > 10) return
+        for (element in throwable.stackTrace) {
+            writer.write("\tat ${element.toString()}\n")
+        }
+        val cause = throwable.cause
+        if (cause != null && cause !== throwable) {
+            writer.write("\nCaused by: $cause\n")
+            writeStackTrace(writer, cause, depth + 1)
         }
     }
 }
