@@ -13,7 +13,29 @@ object Format {
         else -> "${"%.2f".format(sizeBytes / 1_000_000_000.0)} GB"
     }
 
-    fun dirSize(dir: File): Long = dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+    fun dirSize(dir: File): Long {
+        var total = 0L
+        val visited = mutableSetOf<String>()
+        fun walk(d: File) {
+            val canonical = try { d.canonicalPath } catch (_: Exception) { d.absolutePath }
+            if (canonical in visited) return
+            visited.add(canonical)
+            d.listFiles()?.forEach { f ->
+                val isSymlink = try {
+                    java.nio.file.Files.isSymbolicLink(f.toPath())
+                } catch (_: Exception) { false }
+                if (!isSymlink) {
+                    if (f.isFile) {
+                        total += f.length()
+                    } else if (f.isDirectory) {
+                        walk(f)
+                    }
+                }
+            }
+        }
+        walk(dir)
+        return total
+    }
 
     private data class CacheEntry(val bytes: Long, val stamp: Long)
 
@@ -44,5 +66,9 @@ object Format {
             sizeCache[dir.absolutePath] = CacheEntry(bytes, System.currentTimeMillis())
             mainHandler.post { onResult(bytes) }
         }
+    }
+
+    fun invalidateAll() {
+        sizeCache.clear()
     }
 }
