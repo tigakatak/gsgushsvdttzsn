@@ -372,12 +372,15 @@ class TerminalActivity : AppCompatActivity() {
     }
 
     private fun toggleSessionsPanel() {
-        val panel = findViewById<LinearLayout>(R.id.sessions_panel)
-        panel.visibility = if (panel.visibility == android.view.View.VISIBLE) android.view.View.GONE else android.view.View.VISIBLE
+        if (drawerLayout.isDrawerOpen(androidx.core.view.GravityCompat.START)) {
+            drawerLayout.closeDrawer(androidx.core.view.GravityCompat.START)
+        } else {
+            drawerLayout.openDrawer(androidx.core.view.GravityCompat.START)
+        }
     }
 
     private fun hideSessionsPanel() {
-        findViewById<LinearLayout>(R.id.sessions_panel).visibility = android.view.View.GONE
+        drawerLayout.closeDrawer(androidx.core.view.GravityCompat.START)
     }
 
     private fun toggleExtraKeys(show: Boolean) {
@@ -750,7 +753,27 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
                 setCardBackgroundColor(bgColor)
                 radius = 10f
                 cardElevation = 0f
+                isClickable = true
+                isFocusable = true
+                isLongClickable = true
                 setOnClickListener { switchToSession(i); hideSessionsPanel() }
+                setOnLongClickListener {
+                    val currentLabel = sessions[i].mSessionName.ifEmpty { "session ${i + 1}" }
+                    val input = android.widget.EditText(this@TerminalActivity).apply { setText(currentLabel) }
+                    androidx.appcompat.app.AlertDialog.Builder(this@TerminalActivity)
+                        .setTitle("Rename session")
+                        .setView(input)
+                        .setPositiveButton("Rename") { _, _ ->
+                            val newName = input.text.toString().trim()
+                            if (newName.isNotEmpty()) {
+                                sessions[i].mSessionName = newName
+                                updateDrawer()
+                            }
+                        }
+                        .setNegativeButton("Cancel", null)
+                        .show()
+                    true
+                }
                 addView(LinearLayout(context).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
@@ -760,23 +783,9 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
                         setTextColor(themeColor(R.attr.terminalText, 0xFFCDD6F4.toInt()))
                         textSize = 13f
                         layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
-                        setOnLongClickListener {
-                            val currentLabel = sessions[i].mSessionName.ifEmpty { "session ${i + 1}" }
-                            val input = android.widget.EditText(this@TerminalActivity).apply { setText(currentLabel) }
-                            androidx.appcompat.app.AlertDialog.Builder(this@TerminalActivity)
-                                .setTitle("Rename session")
-                                .setView(input)
-                                .setPositiveButton("Rename") { _, _ ->
-                                    val newName = input.text.toString().trim()
-                                    if (newName.isNotEmpty()) {
-                                        sessions[i].mSessionName = newName
-                                        updateDrawer()
-                                    }
-                                }
-                                .setNegativeButton("Cancel", null)
-                                .show()
-                            true
-                        }
+                        isClickable = false
+                        isFocusable = false
+                        isLongClickable = false
                     })
                     val dotSize = dp(12)
                     addView(android.view.View(context).apply {

@@ -1,20 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.drawerlayout.widget.DrawerLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/drawer_layout"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="?attr/terminalBg"
+    android:fitsSystemWindows="true">
 
-    <LinearLayout
+    <androidx.drawerlayout.widget.DrawerLayout
+        android:id="@+id/drawer_layout"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:orientation="vertical"
-        android:background="?attr/terminalBg"
-        android:fitsSystemWindows="true">
+        android:layout_height="0dp"
+        android:layout_weight="1">
 
         <FrameLayout
             android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
+            android:layout_height="match_parent"
             android:background="?attr/terminalBg">
 
             <com.termux.view.TerminalView
@@ -186,11 +186,12 @@
 
         <LinearLayout
             android:id="@+id/sessions_panel"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_width="280dp"
+            android:layout_height="match_parent"
+            android:layout_gravity="start"
             android:orientation="vertical"
-            android:visibility="gone"
-            android:background="?attr/extraKeysBg">
+            android:background="?attr/extraKeysBg"
+            android:fitsSystemWindows="true">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -231,7 +232,8 @@
 
             <ScrollView
                 android:layout_width="match_parent"
-                android:layout_height="140dp"
+                android:layout_height="0dp"
+                android:layout_weight="1"
                 android:fillViewport="true">
 
                 <LinearLayout
@@ -257,36 +259,36 @@
 
         </LinearLayout>
 
-        <HorizontalScrollView
+    </androidx.drawerlayout.widget.DrawerLayout>
+
+    <HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:background="?attr/extraKeysBg"
+        android:scrollbars="none"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:id="@+id/extra_keys_container"
             android:layout_width="match_parent"
             android:layout_height="40dp"
-            android:background="?attr/extraKeysBg"
-            android:scrollbars="none"
-            android:fillViewport="true">
+            android:orientation="horizontal" />
 
-            <LinearLayout
-                android:id="@+id/extra_keys_container"
-                android:layout_width="match_parent"
-                android:layout_height="40dp"
-                android:orientation="horizontal" />
+    </HorizontalScrollView>
 
-        </HorizontalScrollView>
+    <HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:background="?attr/extraKeysBg"
+        android:scrollbars="none"
+        android:fillViewport="true">
 
-        <HorizontalScrollView
+        <LinearLayout
+            android:id="@+id/extra_keys_container_row2"
             android:layout_width="match_parent"
             android:layout_height="40dp"
-            android:background="?attr/extraKeysBg"
-            android:scrollbars="none"
-            android:fillViewport="true">
+            android:orientation="horizontal" />
 
-            <LinearLayout
-                android:id="@+id/extra_keys_container_row2"
-                android:layout_width="match_parent"
-                android:layout_height="40dp"
-                android:orientation="horizontal" />
+    </HorizontalScrollView>
 
-        </HorizontalScrollView>
-
-    </LinearLayout>
-
-</androidx.drawerlayout.widget.DrawerLayout>
+</LinearLayout>
