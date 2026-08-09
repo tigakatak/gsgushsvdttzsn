@@ -13,17 +13,19 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.widget.Button
-import android.widget.FrameLayout
+import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.drawerlayout.widget.DrawerLayout
 import androidx.lifecycle.lifecycleScope
+import androidx.viewpager2.widget.ViewPager2
 import com.redtermapp.R
 import com.redtermapp.distro.DistroInstaller
 import com.redtermapp.service.TerminalService
@@ -43,17 +45,18 @@ class TerminalActivity : AppCompatActivity() {
     private lateinit var terminalView: TerminalView
     private lateinit var drawerLayout: DrawerLayout
     private lateinit var sessionListContainer: LinearLayout
-    private lateinit var rootContainer: LinearLayout
     private lateinit var extraKeysWrapper: LinearLayout
-    private lateinit var terminalWrapper: FrameLayout
+    private lateinit var extraKeysPager: ViewPager2
+    private var rootContainer: LinearLayout? = null
+    private var terminalBgLayer: android.view.View? = null
+    private var row1Container: LinearLayout? = null
+    private var row2Container: LinearLayout? = null
+    private var inputField: EditText? = null
 
     private var terminalBackend: TerminalBackend? = null
     private var currentFontSize = 20
-    private var extraKeysColumnMode = false
-    private var swipeStartX = 0f
-    private var swipeStartY = 0f
 
-    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+    internal fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     private val sessionLaunchScripts = mutableMapOf<com.termux.terminal.TerminalSession, String>()
 
@@ -139,14 +142,37 @@ class TerminalActivity : AppCompatActivity() {
         terminalView = findViewById(R.id.terminal_view)
         drawerLayout = findViewById(R.id.drawer_layout)
         sessionListContainer = findViewById(R.id.session_list_container)
-        rootContainer = findViewById(R.id.root_container)
         extraKeysWrapper = findViewById(R.id.extra_keys_wrapper)
-        terminalWrapper = findViewById(R.id.terminal_wrapper)
+        rootContainer = findViewById(R.id.root_container)
+        terminalBgLayer = findViewById(R.id.terminal_bg_layer)
+        extraKeysPager = findViewById(R.id.extra_keys_pager)
+        extraKeysPager.offscreenPageLimit = 1
+        extraKeysPager.adapter = ExtraKeysPagerAdapter(
+            activity = this,
+            onKeysPageReady = { row1, row2 ->
+                row1Container = row1
+                row2Container = row2
+                setupExtraKeysRow1()
+                setupExtraKeysRow2()
+                updateModifierButtons()
+            },
+            onInputPageReady = { et -> inputField = et }
+        )
+
+        drawerLayout.setDrawerLockMode(
+            DrawerLayout.LOCK_MODE_LOCKED_CLOSED,
+            androidx.core.view.GravityCompat.START
+        )
+        val closeDrawerOnBack = object : OnBackPressedCallback(false) {
+            override fun handleOnBackPressed() { hideSessionsPanel() }
+        }
+        onBackPressedDispatcher.addCallback(this, closeDrawerOnBack)
+        drawerLayout.addDrawerListener(object : DrawerLayout.SimpleDrawerListener() {
+            override fun onDrawerOpened(drawerView: View) { closeDrawerOnBack.isEnabled = true }
+            override fun onDrawerClosed(drawerView: View) { closeDrawerOnBack.isEnabled = false }
+        })
 
         registerForContextMenu(terminalView)
-
-        setupExtraKeysRow1()
-        setupExtraKeysRow2()
 
         val prefs = prefs()
 
@@ -185,7 +211,7 @@ class TerminalActivity : AppCompatActivity() {
             currentFontSize = prefs.getInt("font_size", 20)
             terminalView.setTextSize(currentFontSize)
             applyFontFromPrefs(prefs)
-            terminalView.setBackgroundColor(themeColor(R.attr.terminalBg, 0xFF1E1E2E.toInt()))
+            terminalView.setBackgroundColor(terminalBgWithAlpha())
             val safeIdx = currentIndex.coerceIn(0, sessions.lastIndex)
             terminalView.attachSession(sessions[safeIdx])
             terminalView.onScreenUpdated()
@@ -312,14 +338,14 @@ class TerminalActivity : AppCompatActivity() {
     }
 
     private fun setupExtraKeysRow1() {
-        val container = findViewById<LinearLayout>(R.id.extra_keys_container)
+        val container = row1Container ?: return
         for (label in extraKeyLabels().first) {
             container.addView(createKeyButton(label, keyAction(label)))
         }
     }
 
     private fun setupExtraKeysRow2() {
-        val container = findViewById<LinearLayout>(R.id.extra_keys_container_row2)
+        val container = row2Container ?: return
         for (label in extraKeyLabels().second) {
             container.addView(createKeyButton(label, keyAction(label)))
         }
@@ -351,10 +377,10 @@ class TerminalActivity : AppCompatActivity() {
     }
 
     private fun updateModifierButtons() {
-        for (rowId in intArrayOf(R.id.extra_keys_container, R.id.extra_keys_container_row2)) {
-            val row = findViewById<LinearLayout>(rowId)
-            for (i in 0 until row.childCount) {
-                val btn = row.getChildAt(i) as? Button ?: continue
+        for (row in listOf(row1Container, row2Container)) {
+            val r = row ?: continue
+            for (i in 0 until r.childCount) {
+                val btn = r.getChildAt(i) as? Button ?: continue
                 when (btn.text) {
                     "CTRL" -> btn.setBackgroundColor(if (ctrlActive) modifierHighlightColor() else 0)
                     "ALT" -> btn.setBackgroundColor(if (altActive) modifierHighlightColor() else 0)
@@ -400,77 +426,12 @@ class TerminalActivity : AppCompatActivity() {
         )
     }
 
-    private fun switchExtraKeysMode(toColumn: Boolean) {
-        if (toColumn == extraKeysColumnMode) return
-        extraKeysColumnMode = toColumn
-
-        val row1 = findViewById<LinearLayout>(R.id.extra_keys_container)
-        val row2 = findViewById<LinearLayout>(R.id.extra_keys_container_row2)
-
-        if (toColumn) {
-            val keysWidth = dp(56)
-            val termWidth = (rootContainer.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels) - keysWidth
-
-            extraKeysWrapper.orientation = LinearLayout.VERTICAL
-            extraKeysWrapper.layoutParams = LinearLayout.LayoutParams(keysWidth, LinearLayout.LayoutParams.MATCH_PARENT)
-
-            for (row in listOf(row1, row2)) {
-                row.orientation = LinearLayout.VERTICAL
-                row.layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
-                )
-            }
-
-            terminalWrapper.layoutParams = LinearLayout.LayoutParams(termWidth, LinearLayout.LayoutParams.MATCH_PARENT)
-
-            rootContainer.orientation = LinearLayout.HORIZONTAL
-            rootContainer.removeView(extraKeysWrapper)
-            rootContainer.removeView(terminalWrapper)
-            rootContainer.addView(extraKeysWrapper)
-            rootContainer.addView(terminalWrapper)
+    internal fun sendInputLine(text: String) {
+        val s = session ?: return
+        if (text.isEmpty()) {
+            s.write("\r")
         } else {
-            extraKeysWrapper.orientation = LinearLayout.VERTICAL
-            extraKeysWrapper.layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-
-            for (row in listOf(row1, row2)) {
-                row.orientation = LinearLayout.HORIZONTAL
-                row.layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT, dp(40)
-                )
-            }
-
-            terminalWrapper.layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
-            )
-
-            rootContainer.orientation = LinearLayout.VERTICAL
-            rootContainer.removeView(extraKeysWrapper)
-            rootContainer.removeView(terminalWrapper)
-            rootContainer.addView(terminalWrapper)
-            rootContainer.addView(extraKeysWrapper)
-        }
-
-        updateButtonLayoutParams(row1)
-        updateButtonLayoutParams(row2)
-        terminalView.onScreenUpdated()
-    }
-
-    private fun updateButtonLayoutParams(container: LinearLayout) {
-        for (i in 0 until container.childCount) {
-            val btn = container.getChildAt(i) as? Button ?: continue
-            btn.layoutParams = if (extraKeysColumnMode) {
-                LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f).apply {
-                    setMargins(2, 4, 2, 4)
-                    gravity = Gravity.CENTER
-                }
-            } else {
-                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f).apply {
-                    setMargins(2, 4, 2, 4)
-                    gravity = Gravity.CENTER
-                }
-            }
+            s.write(text)
         }
     }
 
@@ -642,11 +603,11 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
 
                 sessionLaunchScripts[s] = launchSh.absolutePath
                 sessionModel.addSession(s)
-                currentFontSize = prefs.getInt("font_size", 20)
-                terminalView.setTextSize(currentFontSize)
-                applyFontFromPrefs(prefs)
-                terminalView.setBackgroundColor(themeColor(R.attr.terminalBg, 0xFF1E1E2E.toInt()))
-                terminalView.attachSession(s)
+                 currentFontSize = prefs.getInt("font_size", 20)
+                 terminalView.setTextSize(currentFontSize)
+                 applyFontFromPrefs(prefs)
+                 terminalView.setBackgroundColor(terminalBgWithAlpha())
+                 terminalView.attachSession(s)
                 terminalView.onScreenUpdated()
 
                 terminalView.post {
@@ -844,7 +805,7 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
         errorFile.writeText(msg)
 
         terminalView.setTextSize(14)
-        terminalView.setBackgroundColor(themeColor(R.attr.terminalBg, 0xFF1E1E2E.toInt()))
+        terminalView.setBackgroundColor(terminalBgWithAlpha())
         val backend = TerminalBackend(terminalView, this)
         terminalView.setTerminalViewClient(backend)
         backend.onEmulatorReady = { applyEmulatorColors(terminalView) }
@@ -885,6 +846,7 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
         }
         terminalView.requestFocus()
         terminalView.onScreenUpdated()
+        applyTerminalColors()
         updateModifierButtons()
         updateExtraKeysVisibility()
         RedTermWidgetProvider.updateAll(this)
@@ -934,21 +896,10 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
     }
 
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
-        when (ev.action) {
-            android.view.MotionEvent.ACTION_DOWN -> {
-                swipeStartX = ev.x
-                swipeStartY = ev.y
-            }
-            android.view.MotionEvent.ACTION_UP -> {
-                val deltaX = ev.x - swipeStartX
-                val deltaY = ev.y - swipeStartY
-                if (Math.abs(deltaX) > dp(80) && Math.abs(deltaX) > Math.abs(deltaY) * 2) {
-                    if (deltaX < 0) {
-                        switchExtraKeysMode(true)
-                    } else {
-                        switchExtraKeysMode(false)
-                    }
-                }
+        if (ev.action == android.view.MotionEvent.ACTION_DOWN && ev.y < dp(40) && ev.rawY < dp(120)) {
+            val prefs = prefs()
+            if (prefs.getBoolean("autohide_keys", false)) {
+                updateExtraKeysVisibility()
             }
         }
         return super.dispatchTouchEvent(ev)
@@ -1037,6 +988,14 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
         return Triple(bg, extraBg, textColor)
     }
 
+    private fun colorWithAlpha(color: Int): Int {
+        val opacity = prefs().getInt("terminal_opacity", 10).coerceIn(0, 10)
+        val alpha = (opacity * 25.5).toInt().coerceIn(0, 255)
+        return (color and 0x00FFFFFF) or (alpha shl 24)
+    }
+
+    private fun terminalBgWithAlpha(): Int = colorWithAlpha(resolveTerminalColors().first)
+
     private fun applyEmulatorColors(view: TerminalView) {
         val emulator = view.mEmulator ?: return
         val (bg, _, textColor) = resolveTerminalColors()
@@ -1051,18 +1010,26 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
         val prefs = prefs()
         prefs.edit().putString("theme", themeName).apply()
         NightModeReceiver.notifyChanged(this, prefs)
-        val (bg, extraBg, textColor) = resolveTerminalColors()
+        applyTerminalColors()
+    }
 
-        val opacity = prefs.getInt("terminal_opacity", 10).coerceIn(0, 10)
-        val alpha = (opacity * 25.5).toInt().coerceIn(0, 255)
-        val bgWithAlpha = (bg and 0x00FFFFFF) or (alpha shl 24)
-        val extraBgWithAlpha = (extraBg and 0x00FFFFFF) or (alpha shl 24)
+    private fun applyTerminalColors() {
+        val (bg, extraBg, textColor) = resolveTerminalColors()
+        val bgWithAlpha = colorWithAlpha(bg)
+        val extraBgWithAlpha = colorWithAlpha(extraBg)
         terminalView.setBackgroundColor(bgWithAlpha)
         drawerLayout.setBackgroundColor(bg)
-        val row1 = findViewById<LinearLayout>(R.id.extra_keys_container).apply { setBackgroundColor(extraBgWithAlpha) }
-        val row2 = findViewById<LinearLayout>(R.id.extra_keys_container_row2).apply { setBackgroundColor(extraBgWithAlpha) }
-        for (i in 0 until row1.childCount) (row1.getChildAt(i) as? android.widget.TextView)?.setTextColor(textColor)
-        for (i in 0 until row2.childCount) (row2.getChildAt(i) as? android.widget.TextView)?.setTextColor(textColor)
+        extraKeysWrapper.setBackgroundColor(extraBgWithAlpha)
+        terminalBgLayer?.setBackgroundColor(bg)
+        rootContainer?.setBackgroundColor(bg)
+        for (row in listOf(row1Container, row2Container)) {
+            val r = row ?: continue
+            for (i in 0 until r.childCount) (r.getChildAt(i) as? android.widget.TextView)?.setTextColor(textColor)
+        }
+        inputField?.apply {
+            setTextColor(textColor)
+            setHintTextColor(textColor)
+        }
         applyEmulatorColors(terminalView)
     }
 

@@ -14,7 +14,6 @@ class RedTermApp : Application() {
         super.onCreate()
         DynamicColors.applyToActivitiesIfAvailable(this)
         CrashHandler.init(this)
-        DnsWatcher.start(this)
         com.redtermapp.util.Format.invalidateAll()
         val prefs = getSharedPreferences(Prefs.NAME, android.content.Context.MODE_PRIVATE)
         if (prefs.getBoolean(Prefs.KEY_AUTO_NIGHT, false)) {

@@ -4,7 +4,6 @@ import android.content.Context
 import android.os.Build
 import android.provider.DocumentsContract
 import android.util.Log
-import com.redtermapp.DnsHelper
 import com.redtermapp.ui.Prefs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -388,38 +387,10 @@ class DistroInstaller(private val context: Context) {
         }
     }
 
-    private fun getAndroidDnsServers(): List<String> =
-        DnsHelper.getAndroidDnsServers(context)
-
     private fun writeResolvConf(rootfs: File) {
         val resolv = File(rootfs, "etc/resolv.conf")
         resolv.parentFile?.mkdirs()
-        val lines = mutableListOf<String>()
-        val dns = getAndroidDnsServers()
-        for (s in dns) {
-            lines.add("nameserver $s")
-        }
-        if (dns.size < 3) {
-            for (fallback in Prefs.DNS_FALLBACKS) {
-                if (!lines.any { it.contains(fallback) }) {
-                    lines.add("nameserver $fallback")
-                }
-            }
-        }
-        safeWriteText(resolv, lines.joinToString("\n") + "\n")
-    }
-
-    /**
-     * Re-write /etc/resolv.conf for every installed distro using the current
-     * Android DNS servers. Called by DnsWatcher when the network changes so
-     * long-running sessions (e.g. opencode) keep working after wifi/cellular
-     * switches instead of relying on the resolv.conf written at install time.
-     */
-    fun refreshDnsForAll() {
-        for (name in getInstalledDistros()) {
-            val rootfs = getRootfsDir(name)
-            if (rootfs.isDirectory) writeResolvConf(rootfs)
-        }
+        safeWriteText(resolv, "nameserver 8.8.8.8\n")
     }
 
     private fun ensureSupplementaryGroups(rootfs: File) {
@@ -584,15 +555,10 @@ class DistroInstaller(private val context: Context) {
         val resolv = File(rootfs, "etc/resolv.conf")
         if (!resolv.exists()) {
             writeResolvConf(rootfs)
-            repairs.add("Created etc/resolv.conf with Android DNS")
-        } else {
-            val dns = getAndroidDnsServers()
-            val content = resolv.readText()
-            val needsDns = dns.any { !content.contains(it) }
-            if (needsDns) {
-                writeResolvConf(rootfs)
-                repairs.add("Updated etc/resolv.conf with Android DNS")
-            }
+            repairs.add("Created etc/resolv.conf")
+        } else if (!resolv.readText().contains("8.8.8.8")) {
+            writeResolvConf(rootfs)
+            repairs.add("Updated etc/resolv.conf to static DNS")
         }
 
         return repairs.joinToString("\n")

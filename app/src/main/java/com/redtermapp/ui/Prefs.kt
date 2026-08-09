@@ -79,7 +79,6 @@ object Prefs {
 
     const val CUSTOM_FONT_MENU_BASE = 100
 
-    val DNS_FALLBACKS = listOf("8.8.8.8", "1.1.1.1")
     const val CONNECT_TIMEOUT_MS = 30000
     const val READ_TIMEOUT_MS = 120000
 }
