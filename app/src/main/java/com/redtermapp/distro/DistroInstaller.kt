@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.xz.XZCompressorInputStream
+import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileInputStream
@@ -63,7 +64,7 @@ class DistroInstaller(private val context: Context) {
             extractTarball(tarball, rootfsDir, onProgress)
             checkCancel()
             fixupDirectoryPermissions(rootfsDir)
-            setupRootfs(rootfsDir, distro)
+            setupRootfs(rootfsDir)
             com.redtermapp.util.Format.invalidate(rootfsDir)
             saveInstalled(distro.name)
             Log.i("DistroInstaller", "Install complete for ${distro.name}")
@@ -75,6 +76,48 @@ class DistroInstaller(private val context: Context) {
             Log.e("DistroInstaller", "Install failed", e)
             cleanup(distro.name)
             throw Exception("Install failed: ${e.message}", e)
+        }
+    }
+
+    suspend fun installFromFile(
+        tarball: File,
+        distroName: String,
+        onProgress: (Progress) -> Unit
+    ) = withContext(Dispatchers.IO) {
+        cancelled = false
+        try {
+            val rootfsDir = getRootfsDir(distroName)
+            if (rootfsDir.exists()) {
+                rootfsDir.deleteRecursively()
+            }
+            rootfsDir.mkdirs()
+
+            if (tarball.name.endsWith(".tar.xz")) {
+                extractTarball(tarball, rootfsDir, onProgress)
+            } else {
+                extractWithJavaGz(tarball, rootfsDir, onProgress)
+            }
+            checkCancel()
+
+            if (!File(rootfsDir, "etc/os-release").exists() &&
+                !File(rootfsDir, "bin/busybox").exists()
+            ) {
+                throw Exception("File does not look like a Linux rootfs")
+            }
+
+            fixupDirectoryPermissions(rootfsDir)
+            setupRootfs(rootfsDir)
+            com.redtermapp.util.Format.invalidate(rootfsDir)
+            saveInstalled(distroName)
+            Log.i("DistroInstaller", "Install from file complete for $distroName")
+        } catch (e: CancelledException) {
+            Log.i("DistroInstaller", "Install from file cancelled for $distroName")
+            cleanup(distroName)
+            throw e
+        } catch (e: Throwable) {
+            Log.e("DistroInstaller", "Install from file failed", e)
+            cleanup(distroName)
+            throw Exception("Install from file failed: ${e.message}", e)
         }
     }
 
@@ -109,7 +152,7 @@ class DistroInstaller(private val context: Context) {
             extractTarball(tarball, rootfsDir, onProgress)
             checkCancel()
             fixupDirectoryPermissions(rootfsDir)
-            setupRootfs(rootfsDir, distro)
+            setupRootfs(rootfsDir)
             com.redtermapp.util.Format.invalidate(rootfsDir)
             saveInstalled(distroName)
             Log.i("DistroInstaller", "Reset complete for $distroName")
@@ -310,6 +353,26 @@ class DistroInstaller(private val context: Context) {
         }
     }
 
+    private fun extractWithJavaGz(
+        tarball: File, dest: File,
+        onProgress: (Progress) -> Unit
+    ) {
+        try {
+            val total = tarball.length()
+            FileInputStream(tarball).use { fis ->
+                GzipCompressorInputStream(fis).use { gzIn ->
+                    BufferedInputStream(gzIn, 65536).use { bis ->
+                        TarArchiveInputStream(bis).use { tarIn ->
+                            extractTarEntries(tarIn, dest, total, onProgress)
+                        }
+                    }
+                }
+            }
+        } catch (e: NoClassDefFoundError) {
+            throw Exception("Missing compression library: ${e.message}")
+        }
+    }
+
     private fun extractTarEntries(
         tarIn: TarArchiveInputStream, dest: File,
         totalCompressed: Long, onProgress: (Progress) -> Unit
@@ -441,7 +504,7 @@ class DistroInstaller(private val context: Context) {
         file.appendText(text)
     }
 
-    private fun setupRootfs(rootfs: File, distro: Distro) {
+    private fun setupRootfs(rootfs: File) {
         val uid = android.os.Process.myUid()
         val passwd = File(rootfs, "etc/passwd")
         if (!passwd.exists() || !passwd.readText().contains(":$uid:")) {

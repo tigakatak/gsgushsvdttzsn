@@ -470,8 +470,10 @@ class TerminalActivity : AppCompatActivity() {
             val rootDir = File(rootfsDir, "root")
             rootDir.mkdirs()
 
+            val isNew = !File(rootDir, ".init_done").exists()
+
             val bashrcFile = File(rootDir, ".bashrc")
-            if (!bashrcFile.exists()) {
+            if (isNew || !bashrcFile.exists()) {
                 bashrcFile.writeText("""# ~/.bashrc
 export TERM=xterm-256color
 stty erase ^?
@@ -479,7 +481,7 @@ export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 shopt -s checkwinsize histappend
 HISTSIZE=1000
 HISTFILESIZE=2000
-PS1='\[\e[1;32m\]\u@redterm\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]\$ '
+PS1='\[\e[1;32m\]\u@red\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]\$ '
 alias ls='ls --color=auto'
 alias ll='ls -lah --color=auto'
 alias la='ls -A --color=auto'
@@ -491,7 +493,7 @@ alias mv='mv -i'
 """)
             }
             val startupFile = File(rootDir, ".startup")
-            if (!startupFile.exists()) {
+            if (isNew || !startupFile.exists()) {
                 startupFile.writeText("""if [ ! -f /root/.init_done ]; then
     echo '>>> First-time distro setup...'
     if $pmUpdate 2>/dev/null && $pmInstall $pmQuiet nano wget sudo bash openssl 2>/dev/null; then

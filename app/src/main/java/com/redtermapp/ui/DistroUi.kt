@@ -61,12 +61,15 @@ object DistroUi {
 
     fun backupFiles(context: Context): List<File> {
         val files = mutableListOf<File>()
-        File(Environment.getExternalStorageDirectory(), "RedTerm")
-            .listFiles { f -> f.name.endsWith("_backup.tar.gz") }
-            ?.let { files.addAll(it) }
-        context.getExternalFilesDir(null)
-            ?.listFiles { f -> f.name.endsWith("_backup.tar.gz") }
-            ?.let { files.addAll(it) }
+        val dirs = listOf(
+            File(Environment.getExternalStorageDirectory(), "RedTerm"),
+            context.getExternalFilesDir(null)
+        )
+        for (dir in dirs) {
+            dir?.listFiles { f ->
+                f.name.endsWith(".tar.gz") || f.name.endsWith(".tar.xz")
+            }?.let { files.addAll(it) }
+        }
         return files.distinctBy { it.name }
     }
 }

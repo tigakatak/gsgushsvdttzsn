@@ -22,6 +22,10 @@ import com.redtermapp.BuildConfig
 import com.redtermapp.R
 import com.redtermapp.distro.DistroInstaller
 import com.redtermapp.service.TerminalService
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 class SettingsActivity : AppCompatActivity() {
@@ -324,7 +328,7 @@ class SettingsActivity : AppCompatActivity() {
             }
             val files = DistroUi.backupFiles(this)
             if (files.isEmpty()) {
-                Toast.makeText(this, "No backups found in /sdcard/RedTerm", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "No backups or tarballs found in /sdcard/RedTerm", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
             val names = files.map { it.name }.toTypedArray()
@@ -332,7 +336,10 @@ class SettingsActivity : AppCompatActivity() {
                 .setTitle("Restore Distro")
                 .setItems(names) { _, which ->
                     val backupFile = files[which]
-                    val distroName = backupFile.name.removeSuffix("_backup.tar.gz")
+                    val distroName = backupFile.name
+                        .removeSuffix("_backup.tar.gz")
+                        .removeSuffix(".tar.xz")
+                        .removeSuffix(".tar.gz")
                     val rootfsDir = installer.getRootfsDir(distroName)
                     if (rootfsDir.exists()) {
                         androidx.appcompat.app.AlertDialog.Builder(this)
@@ -355,61 +362,83 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun restoreDistro(backupFile: java.io.File, distroName: String, rootfsDir: java.io.File) {
+        val isBackup = backupFile.name.endsWith("_backup.tar.gz")
         val dialog = android.app.ProgressDialog(this).apply {
-            setTitle("Restoring $distroName")
+            setTitle(if (isBackup) "Restoring $distroName" else "Installing $distroName")
             setMessage("Extracting rootfs...")
             setIndeterminate(true)
             setCancelable(false)
         }
         dialog.show()
-        Thread {
-            try {
-                rootfsDir.deleteRecursively()
-                rootfsDir.mkdirs()
-                val pb = ProcessBuilder(
-                    "tar", "-xzf", backupFile.absolutePath, "-C", rootfsDir.absolutePath
-                )
-                pb.redirectErrorStream(true)
-                val proc = pb.start()
+
+        if (isBackup) {
+            Thread {
                 try {
-                    proc.inputStream.use { it.readBytes() }
-                    proc.waitFor()
-                } finally {
-                    proc.destroy()
-                }
-                if (!java.io.File(rootfsDir, "etc/os-release").exists() &&
-                    !java.io.File(rootfsDir, "bin/busybox").exists()) {
-                    val subdirs = rootfsDir.listFiles { f -> f.isDirectory } ?: emptyArray()
-                    if (subdirs.size == 1) {
-                        val nested = subdirs[0]
-                        nested.listFiles()?.forEach { it.renameTo(java.io.File(rootfsDir, it.name)) }
-                        nested.delete()
+                    rootfsDir.deleteRecursively()
+                    rootfsDir.mkdirs()
+                    val pb = ProcessBuilder(
+                        "tar", "-xzf", backupFile.absolutePath, "-C", rootfsDir.absolutePath
+                    )
+                    pb.redirectErrorStream(true)
+                    val proc = pb.start()
+                    try {
+                        proc.inputStream.use { it.readBytes() }
+                        proc.waitFor()
+                    } finally {
+                        proc.destroy()
+                    }
+                    if (!java.io.File(rootfsDir, "etc/os-release").exists() &&
+                        !java.io.File(rootfsDir, "bin/busybox").exists()) {
+                        val subdirs = rootfsDir.listFiles { f -> f.isDirectory } ?: emptyArray()
+                        if (subdirs.size == 1) {
+                            val nested = subdirs[0]
+                            nested.listFiles()?.forEach { it.renameTo(java.io.File(rootfsDir, it.name)) }
+                            nested.delete()
+                        }
+                    }
+                    if (!java.io.File(rootfsDir, "etc/os-release").exists() &&
+                        !java.io.File(rootfsDir, "bin/busybox").exists()
+                    ) {
+                        throw RuntimeException("Backup does not look like a RedTerm distro")
+                    }
+                    com.redtermapp.util.Format.invalidate(rootfsDir)
+                    installer.saveInstalled(distroName)
+                    installer.repairRootfs(rootfsDir)
+                    runOnUiThread {
+                        dialog.dismiss()
+                        Toast.makeText(
+                            this@SettingsActivity, "$distroName restored", Toast.LENGTH_LONG
+                        ).show()
+                        populateDistroList()
+                    }
+                } catch (e: Exception) {
+                    runOnUiThread {
+                        dialog.dismiss()
+                        Toast.makeText(
+                            this@SettingsActivity, "Restore error: ${e.message}", Toast.LENGTH_LONG
+                        ).show()
                     }
                 }
-                if (!java.io.File(rootfsDir, "etc/os-release").exists() &&
-                    !java.io.File(rootfsDir, "bin/busybox").exists()
-                ) {
-                    throw RuntimeException("Backup does not look like a RedTerm distro")
-                }
-                com.redtermapp.util.Format.invalidate(rootfsDir)
-                installer.saveInstalled(distroName)
-                installer.repairRootfs(rootfsDir)
-                runOnUiThread {
+            }.start()
+        } else {
+            lifecycleScope.launch {
+                try {
+                    withContext(Dispatchers.IO) {
+                        installer.installFromFile(backupFile, distroName) {}
+                    }
                     dialog.dismiss()
                     Toast.makeText(
-                        this@SettingsActivity, "$distroName restored", Toast.LENGTH_LONG
+                        this@SettingsActivity, "$distroName installed", Toast.LENGTH_LONG
                     ).show()
                     populateDistroList()
-                }
-            } catch (e: Exception) {
-                runOnUiThread {
+                } catch (e: Exception) {
                     dialog.dismiss()
                     Toast.makeText(
-                        this@SettingsActivity, "Restore error: ${e.message}", Toast.LENGTH_LONG
+                        this@SettingsActivity, "Install error: ${e.message}", Toast.LENGTH_LONG
                     ).show()
                 }
             }
-        }.start()
+        }
     }
 
     private fun showColorPickerDialog(prefs: android.content.SharedPreferences) {
