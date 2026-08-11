@@ -38,7 +38,7 @@ configuration used by CI; locally you can install with the debug build).
 ### Building proot from source
 
 Proot is cross-compiled for Android with the NDK. See `native/build-proot.sh`.
-Pre-built binaries for `arm64-v8a` and `armeabi-v7a` are committed under
+Pre-built binaries for `arm64-v8a` are committed under
 `app/src/main/jniLibs/`, so a normal build does not require the NDK.
 
 ## Running locally

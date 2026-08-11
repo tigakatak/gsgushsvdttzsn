@@ -22,10 +22,4 @@ data class Distro(
     }
 }
 
-fun abiToProotArch(abi: String): String = when {
-    abi.startsWith("arm64") || abi == "aarch64" -> "aarch64"
-    abi.startsWith("armeabi") || abi == "armv7" -> "arm"
-    abi.startsWith("x86_64") -> "x86_64"
-    abi.startsWith("x86") || abi == "i686" -> "i686"
-    else -> "aarch64"
-}
+fun abiToProotArch(abi: String): String = "aarch64"

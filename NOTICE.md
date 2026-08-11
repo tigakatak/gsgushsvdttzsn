@@ -12,7 +12,7 @@ for the complete terms.
 | talloc | Memory pool used by proot | LGPL-3.0-or-later | https://github.com/talloc-project/talloc |
 | libfakeuid | uid spoofing for proot | GPL-2.0-or-later (derived from proot) | bundled with proot |
 
-Binaries are cross-compiled for `arm64-v8a` and `armeabi-v7a` via
+Binaries are cross-compiled for `arm64-v8a` via
 `core/proot/src/main/cpp/CMakeLists.txt` (CMake + Android NDK).
 
 ## Java / Kotlin libraries
