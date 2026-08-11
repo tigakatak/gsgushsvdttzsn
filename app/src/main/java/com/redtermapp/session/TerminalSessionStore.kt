@@ -34,16 +34,17 @@ internal class TerminalSessionStore {
         }
     }
 
-    fun indexOfSessionForDistro(distroName: String): Int =
+    fun indexOfSessionForDistro(distroName: String): Int = synchronized(this) {
         _sessions.value.indexOfFirst {
             sessionDistros[it].equals(distroName, ignoreCase = true)
         }
+    }
 
-    fun attachClient(session: TerminalSession, client: TerminalSessionClient) {
+    fun attachClient(session: TerminalSession, client: TerminalSessionClient) = synchronized(this) {
         sessionClients[session]?.attach(client)
     }
 
-    fun detachClient(client: TerminalSessionClient) {
+    fun detachClient(client: TerminalSessionClient) = synchronized(this) {
         sessionClients.values.forEach { it.detach(client) }
     }
 
@@ -88,14 +89,6 @@ internal class TerminalSessionStore {
             sessionDistros.clear()
             sessionClients.clear()
             active.forEach { it.finishIfRunning() }
-        }
-    }
-
-    fun switchToSession(index: Int) {
-        synchronized(this) {
-            if (index in _sessions.value.indices) {
-                _currentIndex.value = index
-            }
         }
     }
 

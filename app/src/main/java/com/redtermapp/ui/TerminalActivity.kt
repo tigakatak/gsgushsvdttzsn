@@ -35,7 +35,9 @@ import com.termux.terminal.TextStyle
 import com.termux.view.TerminalView
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 class TerminalActivity : AppCompatActivity() {
@@ -74,6 +76,17 @@ class TerminalActivity : AppCompatActivity() {
     private val currentIndex: Int get() = sessionStore.currentIndex.value
 
     private val nightReceiver = makeNightModeReceiver(this)
+
+    private val requestNotificationPermission =
+        registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
+            if (!granted) {
+                Toast.makeText(
+                    this,
+                    "Notifications will be suppressed; the terminal service will still run",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
 
     private fun wireBackend(backend: TerminalBackend) {
         backend.onSessionFinished = { finishedSession -> handleSessionFinished(finishedSession) }
@@ -129,7 +142,7 @@ class TerminalActivity : AppCompatActivity() {
                 this, android.Manifest.permission.POST_NOTIFICATIONS
             ) != android.content.pm.PackageManager.PERMISSION_GRANTED
         ) {
-            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1001)
+            requestNotificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
 
         distroName = intent?.getStringExtra(EXTRA_DISTRO) ?: "alpine"
@@ -267,9 +280,12 @@ class TerminalActivity : AppCompatActivity() {
         } else {
             displayedDistro
         }
+        val weakLabel = java.lang.ref.WeakReference(sizeLabel)
         Format.dirSizeAsync(rootfsDir) { bytes ->
-            if (distroName == displayedDistro) {
-                sizeLabel.text = "$displayedDistro (${Format.size(bytes)})"
+            if (distroName != displayedDistro) return@dirSizeAsync
+            val view = weakLabel.get() ?: return@dirSizeAsync
+            if (view.isAttachedToWindow) {
+                view.text = "$displayedDistro (${Format.size(bytes)})"
             }
         }
     }
@@ -623,25 +639,38 @@ class TerminalActivity : AppCompatActivity() {
     private fun exportCurrentOutput() {
         val s = session ?: return
         hideSessionsPanel()
-        Thread {
+        // Snapshot the transcript on the UI thread (the emulator's screen buffer
+        // is mutated by the terminal renderer / reader thread) so the background
+        // job does not race with concurrent writes.
+        val snapshot = try {
+            s.emulator.getScreen().getTranscriptText()
+        } catch (_: Exception) {
+            Toast.makeText(this, "Export failed: nothing to export", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val distro = distroName
+        lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val text = s.emulator.getScreen().getTranscriptText()
                 var dir = File(
                     android.os.Environment.getExternalStorageDirectory(), "RedTerm/exports"
                 )
                 dir.mkdirs()
                 if (!dir.exists()) dir = File(filesDir, "exports").apply { mkdirs() }
-                val f = File(dir, "${distroName}-${System.currentTimeMillis()}.txt")
-                f.writeText(text)
-                runOnUiThread {
-                    Toast.makeText(this, "Exported: ${f.absolutePath}", Toast.LENGTH_LONG).show()
+                val f = File(dir, "$distro-${System.currentTimeMillis()}.txt")
+                f.writeText(snapshot)
+                withContext(Dispatchers.Main) {
+                    if (!isFinishing && !isDestroyed) {
+                        Toast.makeText(this@TerminalActivity, "Exported: ${f.absolutePath}", Toast.LENGTH_LONG).show()
+                    }
                 }
             } catch (e: Exception) {
-                runOnUiThread {
-                    Toast.makeText(this, "Export failed: ${e.message}", Toast.LENGTH_LONG).show()
+                withContext(Dispatchers.Main) {
+                    if (!isFinishing && !isDestroyed) {
+                        Toast.makeText(this@TerminalActivity, "Export failed: ${e.message}", Toast.LENGTH_LONG).show()
+                    }
                 }
             }
-        }.start()
+        }
     }
 
     private fun copySelectedText() {

@@ -13,6 +13,7 @@ import com.redtermapp.ui.hintColor
 import java.security.MessageDigest
 
 object AppLock {
+    @Volatile
     private var unlockedAt = 0L
 
     fun isUnlocked(prefs: SharedPreferences): Boolean {

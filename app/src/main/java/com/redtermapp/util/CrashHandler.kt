@@ -21,7 +21,7 @@ object CrashHandler {
         val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             val dateStr = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).apply {
-                timeZone = TimeZone.getTimeZone("Asia/Jakarta")
+                timeZone = TimeZone.getDefault()
             }.format(Date())
             val file = File(crashDir, "crash_$dateStr.log")
             try {

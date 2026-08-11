@@ -72,7 +72,10 @@ class DistroInstaller(private val context: Context) {
             Log.i("DistroInstaller", "Install cancelled for ${distro.name}")
             cleanup(distro.name)
             throw e
-        } catch (e: Throwable) {
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            cleanup(distro.name)
+            throw e
+        } catch (e: Exception) {
             Log.e("DistroInstaller", "Install failed", e)
             cleanup(distro.name)
             throw Exception("Install failed: ${e.message}", e)
@@ -114,7 +117,10 @@ class DistroInstaller(private val context: Context) {
             Log.i("DistroInstaller", "Install from file cancelled for $distroName")
             cleanup(distroName)
             throw e
-        } catch (e: Throwable) {
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            cleanup(distroName)
+            throw e
+        } catch (e: Exception) {
             Log.e("DistroInstaller", "Install from file failed", e)
             cleanup(distroName)
             throw Exception("Install from file failed: ${e.message}", e)
@@ -160,7 +166,10 @@ class DistroInstaller(private val context: Context) {
         } catch (e: CancelledException) {
             cleanup(distroName)
             false
-        } catch (e: Throwable) {
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            cleanup(distroName)
+            throw e
+        } catch (e: Exception) {
             Log.e("DistroInstaller", "Reset failed", e)
             cleanup(distroName)
             throw Exception("Reset failed: ${e.message}", e)
@@ -308,9 +317,14 @@ class DistroInstaller(private val context: Context) {
         val process = pb.start()
         try {
             process.inputStream.use { input ->
-                BufferedInputStream(input, 65536).use { bis ->
+                val counter = CountingInputStream(input)
+                BufferedInputStream(counter, 65536).use { bis ->
                     TarArchiveInputStream(bis).use { tarIn ->
-                        extractTarEntries(tarIn, dest, tarball.length(), onProgress)
+                        // Native xz reads the compressed file itself; the only byte
+                        // stream we can observe here is the *decompressed* output, so
+                        // fall back to a rough 3:1 ratio (xz typically achieves 3-5:1).
+                        val approxDecompressedTotal = tarball.length() * 3L
+                        extractTarEntries(tarIn, dest, approxDecompressedTotal, onProgress) { counter.bytesRead }
                     }
                 }
             }
@@ -330,7 +344,36 @@ class DistroInstaller(private val context: Context) {
     private fun killProcess(process: Process) {
         process.destroy()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            process.destroyForcibly()
+            try {
+                process.destroyForcibly().waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
+            } catch (_: Exception) {
+                // best-effort; the SIGTERM from destroy() is still in flight
+            }
+        }
+    }
+
+    /**
+     * Wraps an InputStream and counts the bytes that have been read through it.
+     * Used to compute extraction progress from the *compressed* byte position
+     * (rather than the decompressed byte count, which produced meaningless
+     * percentages because the denominator was an arbitrary 3x fudge factor).
+     */
+    private class CountingInputStream(private val inner: java.io.InputStream) : java.io.InputStream by inner {
+        var bytesRead: Long = 0L
+            private set
+
+        override fun read(): Int {
+            val v = inner.read()
+            if (v != -1) bytesRead++
+            return v
+        }
+
+        override fun read(b: ByteArray, off: Int, len: Int): Int {
+            val n = inner.read(b, off, len)
+            if (n > 0) bytesRead += n
+            return n
+        }
+    }
         }
     }
 
@@ -341,10 +384,11 @@ class DistroInstaller(private val context: Context) {
         try {
             val total = tarball.length()
             FileInputStream(tarball).use { fis ->
-                XZCompressorInputStream(fis).use { xzIn ->
+                val counter = CountingInputStream(fis)
+                XZCompressorInputStream(counter).use { xzIn ->
                     BufferedInputStream(xzIn, 65536).use { bis ->
                         TarArchiveInputStream(bis).use { tarIn ->
-                            extractTarEntries(tarIn, dest, total, onProgress)
+                            extractTarEntries(tarIn, dest, total, onProgress) { counter.bytesRead }
                         }
                     }
                 }
@@ -361,10 +405,11 @@ class DistroInstaller(private val context: Context) {
         try {
             val total = tarball.length()
             FileInputStream(tarball).use { fis ->
-                GzipCompressorInputStream(fis).use { gzIn ->
+                val counter = CountingInputStream(fis)
+                GzipCompressorInputStream(counter).use { gzIn ->
                     BufferedInputStream(gzIn, 65536).use { bis ->
                         TarArchiveInputStream(bis).use { tarIn ->
-                            extractTarEntries(tarIn, dest, total, onProgress)
+                            extractTarEntries(tarIn, dest, total, onProgress) { counter.bytesRead }
                         }
                     }
                 }
@@ -376,7 +421,9 @@ class DistroInstaller(private val context: Context) {
 
     private fun extractTarEntries(
         tarIn: TarArchiveInputStream, dest: File,
-        totalCompressed: Long, onProgress: (Progress) -> Unit
+        totalForProgress: Long,
+        onProgress: (Progress) -> Unit,
+        bytesReadProvider: () -> Long
     ) {
         val firstEntry = tarIn.getNextEntry()
         var prefixToStrip = ""
@@ -388,7 +435,6 @@ class DistroInstaller(private val context: Context) {
                 Log.i("DistroInstaller", "Stripping prefix: $prefixToStrip")
             }
         }
-        var processed = 0L
         fun processEntry(entry: org.apache.commons.compress.archivers.tar.TarArchiveEntry) {
             var entryName = entry.name
             if (prefixToStrip.isNotEmpty() && entryName.startsWith(prefixToStrip)) {
@@ -431,7 +477,6 @@ class DistroInstaller(private val context: Context) {
                         if (read == -1) break
                         checkCancel()
                         out.write(buf, 0, read)
-                        processed += read
                     }
                 }
                 val perm = entry.mode and 0x1FF
@@ -446,8 +491,8 @@ class DistroInstaller(private val context: Context) {
         while (entry != null) {
             checkCancel()
             processEntry(entry)
-            val pct = if (totalCompressed > 0) {
-                ((processed * 100L) / (totalCompressed * 3L)).toInt().coerceAtMost(99)
+            val pct = if (totalForProgress > 0) {
+                ((bytesReadProvider() * 100L) / totalForProgress).toInt().coerceIn(0, 99)
             } else 0
             onProgress(Progress(pct, "Extracting"))
             entry = tarIn.getNextEntry()
@@ -670,7 +715,11 @@ class DistroInstaller(private val context: Context) {
 
     fun getInstalledDistros(): List<String> {
         val dir = File(context.filesDir, "installed")
-        return if (dir.exists()) dir.list()?.filter { getRootfsDir(it).isDirectory }?.toList() ?: emptyList() else emptyList()
+        if (!dir.exists()) return emptyList()
+        return dir.list()
+            ?.filter { runCatching { getRootfsDir(it).isDirectory }.getOrDefault(false) }
+            ?.toList()
+            ?: emptyList()
     }
 
     fun uninstall(distroName: String) {
@@ -693,14 +742,27 @@ class DistroInstaller(private val context: Context) {
             )
             pb.redirectErrorStream(true)
             proc = pb.start()
-            proc.inputStream.use { it.readBytes() }
-            proc.waitFor()
-            backupFile.exists() && backupFile.length() > 0
+            // Drain merged stdout/stderr on a separate thread to avoid the pipe
+            // buffer filling and blocking the process while we wait.
+            val drain = Thread { try { proc.inputStream.use { it.readBytes() } } catch (_: Exception) {} }
+            drain.isDaemon = true
+            drain.start()
+            val finished = proc.waitFor(BACKUP_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)
+            if (!finished) {
+                killProcess(proc!!)
+                return false
+            }
+            drain.join(2000)
+            proc.exitValue() == 0 && backupFile.exists() && backupFile.length() > 0
         } catch (_: Exception) {
             false
         } finally {
             proc?.destroy()
         }
+    }
+
+    private companion object {
+        const val BACKUP_TIMEOUT_SECONDS = 600L
     }
 
     private fun notifyDocumentRootsChanged() {

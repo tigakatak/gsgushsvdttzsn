@@ -34,6 +34,7 @@ class SettingsActivity : AppCompatActivity() {
 
     companion object {
         private const val REQ_IMPORT_FONT = 2001
+        private const val RESTORE_TIMEOUT_SECONDS = 600L
     }
 
     private val nightReceiver = makeNightModeReceiver(this)
@@ -390,8 +391,20 @@ class SettingsActivity : AppCompatActivity() {
                         pb.redirectErrorStream(true)
                         val proc = pb.start()
                         try {
-                            proc.inputStream.use { it.readBytes() }
-                            proc.waitFor()
+                            val drain = Thread {
+                                try { proc.inputStream.use { it.readBytes() } } catch (_: Exception) {}
+                            }
+                            drain.isDaemon = true
+                            drain.start()
+                            val finished = proc.waitFor(RESTORE_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)
+                            if (!finished) {
+                                proc.destroyForcibly()
+                                throw RuntimeException("Restore timed out after ${RESTORE_TIMEOUT_SECONDS}s")
+                            }
+                            drain.join(2000)
+                            if (proc.exitValue() != 0) {
+                                throw RuntimeException("tar exited with code ${proc.exitValue()}")
+                            }
                         } finally {
                             proc.destroy()
                         }

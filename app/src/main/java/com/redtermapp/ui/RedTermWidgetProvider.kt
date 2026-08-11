@@ -76,9 +76,15 @@ class RedTermWidgetProvider : AppWidgetProvider() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             ))
             if (cached == null) {
+                // dirSizeAsync fires its callback on the main thread; the widget
+                // refresh itself does file I/O (directory listing, canonicalization,
+                // cache lookup), so dispatch it to a background thread to avoid
+                // blocking the main thread / triggering ANRs on first refresh.
                 Format.dirSizeAsync(rootfsDir) { bytes ->
                     if (bytes >= 0) {
-                        updateWidget(context, appWidgetManager, widgetId)
+                        Format.runOnBackground {
+                            updateWidget(context, appWidgetManager, widgetId)
+                        }
                     }
                 }
             }

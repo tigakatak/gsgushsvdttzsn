@@ -71,4 +71,13 @@ object Format {
     fun invalidateAll() {
         sizeCache.clear()
     }
+
+    /**
+     * Runs [block] on the background size-computation executor. Useful for
+     * callers (e.g. widget updates) that need to perform cheap file I/O off the
+     * main thread without spinning up their own thread.
+     */
+    fun runOnBackground(block: () -> Unit) {
+        executor.execute(block)
+    }
 }

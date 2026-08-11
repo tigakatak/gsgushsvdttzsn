@@ -196,25 +196,30 @@ class MainActivity : AppCompatActivity() {
 
     private fun backupDistro(name: String) {
         Toast.makeText(this, "Backing up $name...", Toast.LENGTH_SHORT).show()
-        Thread {
+        val appContext = applicationContext
+        lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val outDir = DistroUi.backupDir(this)
+                val outDir = DistroUi.backupDir(appContext)
                 val ok = installer.backup(name, outDir)
-                runOnUiThread {
+                withContext(Dispatchers.Main) {
+                    if (isFinishing || isDestroyed) return@withContext
                     if (ok) {
                         Toast.makeText(
-                            this, "Backup saved: ${java.io.File(outDir, "${name}_backup.tar.gz").absolutePath}", Toast.LENGTH_LONG
+                            this@MainActivity,
+                            "Backup saved: ${java.io.File(outDir, "${name}_backup.tar.gz").absolutePath}",
+                            Toast.LENGTH_LONG
                         ).show()
                     } else {
-                        Toast.makeText(this, "Backup failed", Toast.LENGTH_LONG).show()
+                        Toast.makeText(this@MainActivity, "Backup failed", Toast.LENGTH_LONG).show()
                     }
                 }
             } catch (e: Exception) {
-                runOnUiThread {
-                    Toast.makeText(this, "Backup error: ${e.message}", Toast.LENGTH_LONG).show()
+                withContext(Dispatchers.Main) {
+                    if (isFinishing || isDestroyed) return@withContext
+                    Toast.makeText(this@MainActivity, "Backup error: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             }
-        }.start()
+        }
     }
 
     private fun confirmDelete(name: String) {

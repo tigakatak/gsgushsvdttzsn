@@ -44,7 +44,16 @@ object DistroUi {
             this.textSize = textSize
         }
         if (cached == null) {
-            Format.dirSizeAsync(rootfsDir) { bytes -> label.text = Format.size(bytes) }
+            // dirSizeAsync posts its callback to the main thread unconditionally;
+            // hold the label weakly so we don't retain (or mutate) it after the
+            // activity is destroyed and the view is detached.
+            val weakLabel = java.lang.ref.WeakReference(label)
+            Format.dirSizeAsync(rootfsDir) { bytes ->
+                val view = weakLabel.get() ?: return@dirSizeAsync
+                if (view.isAttachedToWindow) {
+                    view.text = Format.size(bytes)
+                }
+            }
         }
         return label
     }

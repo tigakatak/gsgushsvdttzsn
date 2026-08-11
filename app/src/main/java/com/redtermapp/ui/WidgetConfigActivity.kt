@@ -1,20 +1,21 @@
 package com.redtermapp.ui
 
-import android.app.Activity
 import android.appwidget.AppWidgetManager
 import android.content.Intent
 import android.os.Bundle
 import android.widget.ArrayAdapter
 import android.widget.ListView
 import android.widget.TextView
+import androidx.appcompat.app.AppCompatActivity
 import com.redtermapp.R
 import com.redtermapp.distro.DistroInstaller
 
-class WidgetConfigActivity : Activity() {
+class WidgetConfigActivity : AppCompatActivity() {
 
     private var widgetId = AppWidgetManager.INVALID_APPWIDGET_ID
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        AppTheme.apply(this)
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_widget_config)
 
