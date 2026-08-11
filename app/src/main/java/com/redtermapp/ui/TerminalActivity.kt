@@ -502,7 +502,12 @@ class TerminalActivity : AppCompatActivity() {
     }
     private fun handleSessionFinished(finishedSession: TerminalSession) {
         if (sessions.isEmpty()) {
-            finish()
+            if (!isFinishing && !isDestroyed) {
+                startActivity(Intent(this, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                })
+                finish()
+            }
         } else {
             if (terminalView.mTermSession === finishedSession) {
                 val safeIdx = currentIndex.coerceIn(0, sessions.lastIndex)
