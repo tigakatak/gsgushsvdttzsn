@@ -358,7 +358,7 @@ class DistroInstaller(private val context: Context) {
      * (rather than the decompressed byte count, which produced meaningless
      * percentages because the denominator was an arbitrary 3x fudge factor).
      */
-    private class CountingInputStream(private val inner: java.io.InputStream) : java.io.InputStream by inner {
+    private class CountingInputStream(private val inner: java.io.InputStream) : java.io.InputStream() {
         var bytesRead: Long = 0L
             private set
 
@@ -372,8 +372,6 @@ class DistroInstaller(private val context: Context) {
             val n = inner.read(b, off, len)
             if (n > 0) bytesRead += n
             return n
-        }
-    }
         }
     }
 
