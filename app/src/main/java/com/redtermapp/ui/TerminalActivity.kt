@@ -228,6 +228,11 @@ class TerminalActivity : AppCompatActivity() {
                     active to index
                 }.collect { (active, index) ->
                     val backend = ensureTerminalBackend()
+                    if (terminalView.mRenderer == null) {
+                        backend.applyFontSize()
+                        applyFontFromPrefs(prefs())
+                        terminalView.setBackgroundColor(terminalBgWithAlpha())
+                    }
                     active.forEach { sessionStore.attachClient(it, backend) }
                     if (active.isEmpty()) {
                         updateDrawer()
