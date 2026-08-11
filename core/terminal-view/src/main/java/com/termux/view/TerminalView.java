@@ -510,6 +510,7 @@ public final class TerminalView extends View {
 
     /** Perform a scroll, either from dragging the screen or by scrolling a mouse wheel. */
     void doScroll(MotionEvent event, int rowsDown) {
+        if (mEmulator == null) return;
         boolean up = rowsDown < 0;
         int amount = Math.abs(rowsDown);
         for (int i = 0; i < amount; i++) {
@@ -852,7 +853,9 @@ public final class TerminalView extends View {
         if (handleKeyCodeAction(keyCode, keyMod))
             return true;
 
+        if (mTermSession == null) return false;
         TerminalEmulator term = mTermSession.getEmulator();
+        if (term == null) return false;
         String code = KeyHandler.getCode(keyCode, keyMod, term.isCursorKeysApplicationMode(), term.isKeypadApplicationMode());
         if (code == null) return false;
         mTermSession.write(code);
@@ -868,6 +871,7 @@ public final class TerminalView extends View {
                 // shift+page_up and shift+page_down should scroll scrollback history instead of
                 // scrolling command history or changing pages
                 if (shiftDown) {
+                    if (mEmulator == null) return true;
                     long time = SystemClock.uptimeMillis();
                     MotionEvent motionEvent = MotionEvent.obtain(time, time, MotionEvent.ACTION_DOWN, 0, 0, 0);
                     doScroll(motionEvent, keyCode == KeyEvent.KEYCODE_PAGE_UP ? -mEmulator.mRows : mEmulator.mRows);
