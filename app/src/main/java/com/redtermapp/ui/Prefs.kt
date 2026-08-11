@@ -20,11 +20,6 @@ object Prefs {
     const val KEY_LOCK_PIN = "lock_pin"
     const val KEY_LAST_DISTRO = "last_distro"
     const val KEY_SNIPPETS = "snippets"
-    const val KEY_EXTRA_KEYS_ROW1 = "extra_keys_row1"
-    const val KEY_EXTRA_KEYS_ROW2 = "extra_keys_row2"
-    const val KEY_CUSTOM_BG = "custom_bg"
-    const val KEY_CUSTOM_TEXT = "custom_text"
-    const val KEY_CUSTOM_PRIMARY = "custom_primary"
 
     const val SCROLLBACK_DEFAULT = 4
     const val FONT_SIZE_DEFAULT = 20
@@ -63,12 +58,6 @@ object Prefs {
         "Droid Sans Mono" to "fonts/DroidSansMono.ttf",
         "Noto Sans Mono" to "fonts/NotoSansMono.ttf",
         "Cascadia Code" to "fonts/CascadiaCode.ttf"
-    )
-
-    val THEME_MENU_MAP = listOf(
-        61 to "default", 62 to "green", 63 to "light", 69 to "red",
-        68 to "amoled", 64 to "dracula", 65 to "nord", 66 to "tokyo",
-        67 to "gruvbox", 70 to "custom", 79 to "dynamic"
     )
 
     val FONT_MENU_IDS = listOf(

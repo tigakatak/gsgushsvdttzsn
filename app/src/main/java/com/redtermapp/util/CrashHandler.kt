@@ -7,6 +7,7 @@ import java.io.FileWriter
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 
 object CrashHandler {
     private var enabled = false
@@ -19,7 +20,9 @@ object CrashHandler {
         crashDir.mkdirs()
         val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            val dateStr = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
+            val dateStr = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("Asia/Jakarta")
+            }.format(Date())
             val file = File(crashDir, "crash_$dateStr.log")
             try {
                 FileWriter(file).use { writer ->

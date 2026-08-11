@@ -2,22 +2,32 @@ package com.redtermapp.service
 
 import android.app.PendingIntent
 import android.app.Service
+import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
-import android.net.wifi.WifiManager
-import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.redtermapp.R
 import com.redtermapp.RedTermApp
 import com.redtermapp.ui.AppTheme
 import com.redtermapp.ui.Prefs
 import com.redtermapp.ui.TerminalActivity
+import com.redtermapp.ui.RedTermWidgetProvider
 import com.redtermapp.ui.capitalized
 import com.redtermapp.ui.prefs
+import com.redtermapp.session.terminalSessionStore
+import com.termux.terminal.TerminalSession
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.IdentityHashMap
 
 class TerminalService : Service() {
 
@@ -27,12 +37,16 @@ class TerminalService : Service() {
         const val ACTION_AUTO_WAKE = "com.redtermapp.action.AUTO_WAKE"
         const val ACTION_AUTO_RELEASE = "com.redtermapp.action.AUTO_RELEASE"
         const val ACTION_EXIT = "com.redtermapp.action.EXIT"
-        const val ACTION_STOP = "com.redtermapp.action.STOP"
+        const val ACTION_CREATE_SESSION = "com.redtermapp.action.CREATE_SESSION"
+        const val EXTRA_DISTRO = "distro"
 
         private fun terminalPendingIntent(context: Context): PendingIntent =
             PendingIntent.getActivity(
                 context, 0,
                 Intent(context, TerminalActivity::class.java).apply {
+                    context.prefs().getString(Prefs.KEY_LAST_DISTRO, null)?.let {
+                        putExtra(TerminalActivity.EXTRA_DISTRO, it)
+                    }
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
                 },
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -40,26 +54,38 @@ class TerminalService : Service() {
     }
 
     private var wakeLock: PowerManager.WakeLock? = null
-    private var wifiLock: WifiManager.WifiLock? = null
     private var userWakelockHeld = false
     private var autoWakelockHeld = false
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val launchScripts = IdentityHashMap<TerminalSession, File>()
+    private val pendingDistros = mutableSetOf<String>()
+    private val sessionStore by lazy { terminalSessionStore }
+    private val launcher by lazy { SessionLauncher(applicationContext) }
 
     override fun onCreate() {
         super.onCreate()
+        startForeground(RedTermApp.NOTIF_ID_TERMINAL, buildNotification())
+        if (sessionStore.sessions.value.isEmpty()) sweepStaleLaunchScripts()
+    }
+
+    private fun buildNotification(): android.app.Notification {
         val pendingIntent = terminalPendingIntent(this)
-        val notif = NotificationCompat.Builder(this, RedTermApp.CHANNEL_TERMINAL)
-            .setContentTitle("RedTerm")
-            .setContentText("Starting...")
+        val exitIntent = Intent(this, TerminalService::class.java).apply { action = ACTION_EXIT }
+        val exitPI = PendingIntent.getService(
+            this, 3, exitIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        return NotificationCompat.Builder(this, RedTermApp.CHANNEL_TERMINAL)
+            .setContentTitle("RedTerm - ${getDistroName()}")
+            .setContentText("${sessionStore.sessions.value.size} session(s) | Tap to open")
             .setSmallIcon(com.redtermapp.R.drawable.ic_notification)
             .setColor(themeAccent())
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setAutoCancel(false)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .addAction(NotificationCompat.Action.Builder(null, "Exit", exitPI).build())
             .build()
-        startForeground(RedTermApp.NOTIF_ID_TERMINAL, notif)
-        acquireWifiLock()
-        updateNotification()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -68,13 +94,11 @@ class TerminalService : Service() {
                 userWakelockHeld = true
                 prefs().edit().putBoolean(Prefs.KEY_WAKELOCK, true).apply()
                 updateWakeLock()
-                updateNotification()
             }
             ACTION_RELEASE -> {
                 userWakelockHeld = false
                 prefs().edit().putBoolean(Prefs.KEY_WAKELOCK, false).apply()
                 updateWakeLock()
-                updateNotification()
             }
             ACTION_AUTO_WAKE -> {
                 autoWakelockHeld = true
@@ -84,15 +108,12 @@ class TerminalService : Service() {
                 autoWakelockHeld = false
                 updateWakeLock()
             }
-            ACTION_EXIT -> {
-                releaseWakeLock()
-                releaseWifiLock()
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
+            ACTION_CREATE_SESSION -> {
+                intent.getStringExtra(EXTRA_DISTRO)?.let(::createSession)
             }
-            ACTION_STOP -> {
+            ACTION_EXIT -> {
+                finishAllSessions()
                 releaseWakeLock()
-                releaseWifiLock()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
@@ -100,7 +121,10 @@ class TerminalService : Service() {
                 val prefs = prefs()
                 userWakelockHeld = prefs.getBoolean(Prefs.KEY_WAKELOCK, true)
                 updateWakeLock()
-                updateNotification()
+                if (sessionStore.sessions.value.isEmpty()) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
             }
         }
         return START_STICKY
@@ -109,9 +133,87 @@ class TerminalService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        serviceScope.cancel()
         releaseWakeLock()
-        releaseWifiLock()
         super.onDestroy()
+    }
+
+    private fun createSession(distroName: String) {
+        if (!pendingDistros.add(distroName)) return
+        serviceScope.launch {
+            var launchScript: File? = null
+            try {
+                val spec = withContext(Dispatchers.IO) { launcher.prepare(distroName) }
+                launchScript = spec.launchScript
+                val bridge = TerminalSessionClientBridge(::handleSessionFinished)
+                val session = TerminalSession(
+                    spec.executable,
+                    spec.workingDirectory,
+                    spec.arguments,
+                    emptyArray(),
+                    spec.scrollbackRows,
+                    bridge,
+                ).apply {
+                    mSessionName = distroName
+                }
+                synchronized(launchScripts) {
+                    launchScripts[session] = spec.launchScript
+                }
+                sessionStore.addSession(session, distroName, bridge)
+                updateNotification()
+                RedTermWidgetProvider.updateAll(this@TerminalService)
+            } catch (e: Exception) {
+                launchScript?.delete()
+                Log.e("TerminalService", "Failed to launch $distroName", e)
+                Toast.makeText(
+                    this@TerminalService,
+                    "Failed to launch $distroName: ${e.message}",
+                    Toast.LENGTH_LONG,
+                ).show()
+            } finally {
+                pendingDistros.remove(distroName)
+                if (sessionStore.sessions.value.isEmpty()) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
+            }
+        }
+    }
+
+    private fun handleSessionFinished(session: TerminalSession) {
+        synchronized(launchScripts) {
+            launchScripts.remove(session)
+        }?.delete()
+        serviceScope.launch {
+            sessionStore.sessionFinished(session)
+            RedTermWidgetProvider.updateAll(this@TerminalService)
+            if (sessionStore.sessions.value.isEmpty()) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            } else {
+                updateNotification()
+            }
+        }
+    }
+
+    private fun finishAllSessions() {
+        sessionStore.finishAllSessions()
+        synchronized(launchScripts) {
+            launchScripts.values.forEach { it.delete() }
+            launchScripts.clear()
+        }
+        filesDir.listFiles { _, name -> name.startsWith("launch_") && name.endsWith(".sh") }
+            ?.forEach { it.delete() }
+    }
+
+    private fun sweepStaleLaunchScripts() {
+        filesDir.listFiles { _, name -> name.startsWith("launch_") && name.endsWith(".sh") }
+            ?.forEach { it.delete() }
+    }
+
+    private fun updateNotification() {
+        getSystemService(NotificationManager::class.java)
+            ?.notify(RedTermApp.NOTIF_ID_TERMINAL, buildNotification())
     }
 
     private fun updateWakeLock() {
@@ -139,77 +241,6 @@ class TerminalService : Service() {
     private fun releaseWakeLock() {
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
-    }
-
-    private fun acquireWifiLock() {
-        if (wifiLock?.isHeld == true) return
-        try {
-            val wm = applicationContext.getSystemService(WifiManager::class.java) ?: return
-            val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                WifiManager.WIFI_MODE_FULL_LOW_LATENCY
-            } else {
-                @Suppress("DEPRECATION")
-                WifiManager.WIFI_MODE_FULL_HIGH_PERF
-            }
-            wifiLock = wm.createWifiLock(mode, "RedTermApp:TerminalWifiLock").apply {
-                setReferenceCounted(false)
-                acquire()
-            }
-        } catch (e: Exception) {
-            Log.w("TerminalService", "Failed to acquire wifi lock", e)
-        }
-    }
-
-    private fun releaseWifiLock() {
-        try {
-            wifiLock?.let { if (it.isHeld) it.release() }
-        } catch (e: Exception) {
-            Log.w("TerminalService", "Failed to release wifi lock", e)
-        }
-        wifiLock = null
-    }
-
-    private fun updateNotification() {
-        val pendingIntent = terminalPendingIntent(this)
-
-        val isHeld = wakeLock?.isHeld == true
-        val wakelockStatus = if (isHeld) "\u25CF" else "\u25CB"
-        val autoStatus = if (autoWakelockHeld && !userWakelockHeld) " (auto)" else ""
-
-        val builder = NotificationCompat.Builder(this, RedTermApp.CHANNEL_TERMINAL)
-            .setContentTitle("RedTerm - ${getDistroName()}")
-            .setContentText("$wakelockStatus Wake lock$autoStatus | Tap to open")
-            .setSmallIcon(com.redtermapp.R.drawable.ic_notification)
-            .setColor(themeAccent())
-            .setContentIntent(pendingIntent)
-            .setOngoing(true)
-            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-
-        if (userWakelockHeld) {
-            val releaseIntent = Intent(this, TerminalService::class.java).apply { action = ACTION_RELEASE }
-            val releasePI = PendingIntent.getService(
-                this, 1, releaseIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            builder.addAction(NotificationCompat.Action.Builder(null, "Release", releasePI).build())
-        } else {
-            val acquireIntent = Intent(this, TerminalService::class.java).apply { action = ACTION_ACQUIRE }
-            val acquirePI = PendingIntent.getService(
-                this, 2, acquireIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            builder.addAction(NotificationCompat.Action.Builder(null, "Acquire", acquirePI).build())
-        }
-
-        val exitIntent = Intent(this, TerminalService::class.java).apply { action = ACTION_EXIT }
-        val exitPI = PendingIntent.getService(
-            this, 3, exitIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        builder.addAction(NotificationCompat.Action.Builder(null, "Exit", exitPI).build())
-
-        val manager = getSystemService(android.app.NotificationManager::class.java)
-        manager.notify(RedTermApp.NOTIF_ID_TERMINAL, builder.build())
     }
 
     private fun getDistroName(): String {

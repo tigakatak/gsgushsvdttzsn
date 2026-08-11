@@ -11,7 +11,6 @@ object DistroRegistry {
                 "aarch64" to "3e58affaf2b8c7c4999bb1f17bd773fe9447c6b7f8f2213caae82289b371a224"
             ),
             prootArchs = listOf("aarch64"),
-            installSizeMb = 400,
             packageManager = "dnf"
         ),
         Distro(
@@ -23,7 +22,6 @@ object DistroRegistry {
                 "aarch64" to "bffe6373dea84dce6a25c94f225ccdaec96c825710d655aa1f4cae79333edea6"
             ),
             prootArchs = listOf("aarch64"),
-            installSizeMb = 30,
             packageManager = "apk"
         ),
         Distro(
@@ -35,7 +33,6 @@ object DistroRegistry {
                 "aarch64" to "718151cc4adad701223c689a7e4690cb7710b7b16e9b23617b671856ff04d563"
             ),
             prootArchs = listOf("aarch64"),
-            installSizeMb = 450,
             packageManager = "pacman"
         ),
         Distro(
@@ -47,7 +44,6 @@ object DistroRegistry {
                 "aarch64" to "fe499e00903db5342969ea2d87a97349c78b43e4cb53f0388cec5ad8cc35e92c"
             ),
             prootArchs = listOf("aarch64"),
-            installSizeMb = 500,
             packageManager = "pacman"
         ),
         Distro(
@@ -59,7 +55,6 @@ object DistroRegistry {
                 "aarch64" to "4baa32280cc70b67e2c650777c1d974349f0cdf23afaabc305ad3bc6182b8df8"
             ),
             prootArchs = listOf("aarch64"),
-            installSizeMb = 300,
             packageManager = "apt"
         ),
         Distro(
@@ -71,7 +66,6 @@ object DistroRegistry {
                 "aarch64" to "eb86202ef9887dc315e93c627bef3b6a825da871129ab3de91466ab2c2e06019"
             ),
             prootArchs = listOf("aarch64"),
-            installSizeMb = 450,
             packageManager = "dnf"
         ),
         Distro(
@@ -83,7 +77,6 @@ object DistroRegistry {
                 "aarch64" to "d6403a5da175df325611d23af4b92330856059c45454eced7f4cdf3ca6df2e4e"
             ),
             prootArchs = listOf("aarch64"),
-            installSizeMb = 500,
             packageManager = "apt",
             archOverride = mapOf("aarch64" to "arm64")
         ),
@@ -96,7 +89,6 @@ object DistroRegistry {
                 "aarch64" to "90fd86130d440b6d6ed6408b21306189eb41fe07d0026aab836ae203a1c419a4"
             ),
             prootArchs = listOf("aarch64"),
-            installSizeMb = 400,
             packageManager = "pacman"
         ),
         Distro(
@@ -108,7 +100,6 @@ object DistroRegistry {
                 "aarch64" to "0282a82a75e0b17aa0f72622847ee0bfda85fa84bb6cf49bc72c5515816c47f0"
             ),
             prootArchs = listOf("aarch64"),
-            installSizeMb = 400,
             packageManager = "dnf"
         ),
         Distro(
@@ -120,7 +111,6 @@ object DistroRegistry {
                 "aarch64" to "a8883244a7031559a2bd8dc16b7d8afc947930b611819d8a28a09545097a6ba5"
             ),
             prootArchs = listOf("aarch64"),
-            installSizeMb = 350,
             packageManager = "apt"
         ),
         Distro(
@@ -132,7 +122,6 @@ object DistroRegistry {
                 "aarch64" to "7a7c449b3efe504749e40f556d13812010bccc930a820a56973a0f5fc2f16997"
             ),
             prootArchs = listOf("aarch64"),
-            installSizeMb = 200,
             packageManager = "xbps"
         )
     )

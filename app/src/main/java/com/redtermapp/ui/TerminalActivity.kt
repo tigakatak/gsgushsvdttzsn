@@ -1,15 +1,11 @@
 package com.redtermapp.ui
 
-import android.Manifest
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
 import android.view.ContextMenu
 import android.view.Gravity
 import android.view.KeyEvent
-import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.widget.Button
@@ -24,19 +20,22 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.drawerlayout.widget.DrawerLayout
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.viewpager2.widget.ViewPager2
 import com.redtermapp.R
 import com.redtermapp.distro.DistroInstaller
+import com.redtermapp.session.terminalSessionStore
 import com.redtermapp.service.TerminalService
 import com.redtermapp.util.Format
 import com.termux.terminal.TerminalEmulator
 import com.termux.terminal.TerminalSession
 import com.termux.terminal.TextStyle
 import com.termux.view.TerminalView
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.io.File
 
 class TerminalActivity : AppCompatActivity() {
@@ -54,11 +53,8 @@ class TerminalActivity : AppCompatActivity() {
     private var inputField: EditText? = null
 
     private var terminalBackend: TerminalBackend? = null
-    private var currentFontSize = 20
 
     internal fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
-
-    private val sessionLaunchScripts = mutableMapOf<com.termux.terminal.TerminalSession, String>()
 
     companion object {
         const val EXTRA_DISTRO = "distro"
@@ -73,14 +69,14 @@ class TerminalActivity : AppCompatActivity() {
         }
     }
 
-    private val sessionModel: TerminalViewModel by lazy { TerminalViewModel.get(application) }
-    private val sessions: List<TerminalSession> get() = sessionModel.sessions.value
-    private val currentIndex: Int get() = sessionModel.currentIndex.value
+    private val sessionStore by lazy { terminalSessionStore }
+    private val sessions: List<TerminalSession> get() = sessionStore.sessions.value
+    private val currentIndex: Int get() = sessionStore.currentIndex.value
 
     private val nightReceiver = makeNightModeReceiver(this)
 
     private fun wireBackend(backend: TerminalBackend) {
-        backend.onSessionFinished = { finishedSession -> handleSessionFinished(finishedSession) }
+        backend.onSessionFinished = { handleSessionFinished() }
         backend.onLinkTap = { link, isPath -> handleLinkTap(link, isPath) }
         backend.onModifierConsumed = { consumeModifiers() }
         backend.onEmulatorReady = { applyEmulatorColors(backend.view) }
@@ -176,13 +172,7 @@ class TerminalActivity : AppCompatActivity() {
 
         val prefs = prefs()
 
-        val rootfsDir = DistroInstaller(applicationContext).getRootfsDir(distroName)
-        val sizeLabel = findViewById<TextView>(R.id.distro_size_label)
-        val cached = Format.cachedSize(rootfsDir)
-        sizeLabel.text = if (cached != null) "$distroName (${Format.size(cached)})" else distroName
-        Format.dirSizeAsync(rootfsDir) { bytes ->
-            sizeLabel.text = "$distroName (${Format.size(bytes)})"
-        }
+        updateDistroSizeLabel()
 
         if (prefs.getBoolean(Prefs.KEY_WAKELOCK, Prefs.WAKELOCK_DEFAULT)) {
             window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -192,42 +182,67 @@ class TerminalActivity : AppCompatActivity() {
         }
 
         findViewById<TextView>(R.id.new_session_button).setOnClickListener {
-            createNewSession()
+            requestNewSession(distroName)
         }
 
         registerNightModeReceiver(nightReceiver)
-        sweepStaleLaunchScripts()
+        observeSessions()
         if (sessions.isEmpty()) {
-            createNewSession()
+            requestNewSession(distroName)
         } else {
-            val backend = TerminalBackend(terminalView, this).also {
-                terminalBackend = it
-                terminalView.setTerminalViewClient(it)
-                wireBackend(it)
-            }
+            startForegroundService()
+            val backend = ensureTerminalBackend()
             for (s in sessions) {
-                s.updateTerminalSessionClient(backend)
+                sessionStore.attachClient(s, backend)
             }
-            currentFontSize = prefs.getInt("font_size", 20)
-            terminalView.setTextSize(currentFontSize)
+            backend.applyFontSize()
             applyFontFromPrefs(prefs)
             terminalView.setBackgroundColor(terminalBgWithAlpha())
-            val safeIdx = currentIndex.coerceIn(0, sessions.lastIndex)
-            terminalView.attachSession(sessions[safeIdx])
-            terminalView.onScreenUpdated()
-            terminalView.post {
-                terminalView.requestFocus()
-                terminalView.isFocusableInTouchMode = true
-            }
-            val target = sessions.indexOfFirst { it.mSessionName.equals(distroName, ignoreCase = true) }
-            if (target >= 0 && target != currentIndex) {
-                sessionModel.switchToSession(target)
+            val target = sessionStore.indexOfSessionForDistro(distroName)
+            if (target >= 0) {
+                sessionStore.switchToSession(target)
                 terminalView.attachSession(sessions[target])
                 terminalView.onScreenUpdated()
+                terminalView.post {
+                    terminalView.requestFocus()
+                    terminalView.isFocusableInTouchMode = true
+                }
+            } else {
+                requestNewSession(distroName)
             }
             updateDrawer()
         }
-        startForegroundService()
+    }
+
+    private fun ensureTerminalBackend(): TerminalBackend =
+        terminalBackend ?: TerminalBackend(terminalView, this).also {
+            terminalBackend = it
+            terminalView.setTerminalViewClient(it)
+            wireBackend(it)
+        }
+
+    private fun observeSessions() {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                combine(sessionStore.sessions, sessionStore.currentIndex) { active, index ->
+                    active to index
+                }.collect { (active, index) ->
+                    val backend = ensureTerminalBackend()
+                    active.forEach { sessionStore.attachClient(it, backend) }
+                    if (active.isEmpty()) {
+                        updateDrawer()
+                        return@collect
+                    }
+                    val safeIndex = index.coerceIn(active.indices)
+                    if (terminalView.mTermSession !== active[safeIndex]) {
+                        terminalView.attachSession(active[safeIndex])
+                        terminalView.onScreenUpdated()
+                    }
+                    updateDrawer()
+                    RedTermWidgetProvider.updateAll(this@TerminalActivity)
+                }
+            }
+        }
     }
 
     private fun isRepeatableKey(label: String): Boolean {
@@ -235,6 +250,23 @@ class TerminalActivity : AppCompatActivity() {
             "\u25B2", "UP", "\u25BC", "DOWN", "\u25C0", "LEFT", "\u25B6", "RIGHT",
             "HOME", "END", "DEL", "INS", "\u232B", "BACKSPACE"
         )
+    }
+
+    private fun updateDistroSizeLabel() {
+        val displayedDistro = distroName
+        val rootfsDir = DistroInstaller(applicationContext).getRootfsDir(displayedDistro)
+        val sizeLabel = findViewById<TextView>(R.id.distro_size_label)
+        val cached = Format.cachedSize(rootfsDir)
+        sizeLabel.text = if (cached != null) {
+            "$displayedDistro (${Format.size(cached)})"
+        } else {
+            displayedDistro
+        }
+        Format.dirSizeAsync(rootfsDir) { bytes ->
+            if (distroName == displayedDistro) {
+                sizeLabel.text = "$displayedDistro (${Format.size(bytes)})"
+            }
+        }
     }
 
     private fun createKeyButton(label: String, action: () -> Unit): Button {
@@ -332,8 +364,10 @@ class TerminalActivity : AppCompatActivity() {
             }
         if (label == "CTRL" || label == "ALT") return action
         return {
-            action()
-            consumeModifiers()
+            if (session != null || label == "\u2630" || label == "MENU") {
+                action()
+                consumeModifiers()
+            }
         }
     }
 
@@ -438,203 +472,29 @@ class TerminalActivity : AppCompatActivity() {
     private val session: TerminalSession?
         get() = if (currentIndex in sessions.indices) sessions[currentIndex] else null
 
-    private fun writeShellConfigs(rootfsDir: File) {
-        try {
-            val osRelease = try { File(rootfsDir, "etc/os-release").readText() } catch (_: Exception) { "" }
-            val distro = when {
-                osRelease.contains("Alpine", ignoreCase = true) -> "alpine"
-                osRelease.contains("Ubuntu", ignoreCase = true) -> "ubuntu"
-                osRelease.contains("Debian", ignoreCase = true) -> "debian"
-                File(rootfsDir, "etc/fedora-release").exists() || osRelease.contains("Fedora", ignoreCase = true) -> "fedora"
-                osRelease.contains("Void", ignoreCase = true) -> "void"
-                osRelease.contains("Manjaro", ignoreCase = true) -> "manjaro"
-                osRelease.contains("Arch Linux", ignoreCase = true) -> "arch"
-                osRelease.contains("Artix", ignoreCase = true) -> "artix"
-                osRelease.contains("Rocky Linux", ignoreCase = true) -> "rocky"
-                osRelease.contains("AlmaLinux", ignoreCase = true) -> "almalinux"
-                osRelease.contains("Kali", ignoreCase = true) -> "kali"
-                File(rootfsDir, "etc/debian_version").exists() -> "debian"
-                else -> "unknown"
-            }
-
-            val (pmUpdate, pmInstall, pmQuiet) = when (distro) {
-                "alpine" -> Triple("apk update", "apk add", "-q")
-                "debian", "ubuntu", "kali" -> Triple("apt-get update -qq", "DEBIAN_FRONTEND=noninteractive apt-get install -y", "-qq")
-                "fedora", "rocky", "almalinux" -> Triple("dnf check-update || true", "dnf install -y", "-q")
-                "void" -> Triple("xbps-install -Su", "xbps-install -S", "")
-                "arch", "artix" -> Triple("pacman -Syy --noconfirm", "pacman -S --noconfirm --needed glibc gcc-libs", "")
-                "manjaro" -> Triple("pacman -Syy --noconfirm", "pacman -S --noconfirm", "")
-                else -> Triple(":", ":", "")
-            }
-
-            val rootDir = File(rootfsDir, "root")
-            rootDir.mkdirs()
-
-            val isNew = !File(rootDir, ".init_done").exists()
-
-            val bashrcFile = File(rootDir, ".bashrc")
-            if (isNew || !bashrcFile.exists()) {
-                bashrcFile.writeText("""# ~/.bashrc
-export TERM=xterm-256color
-stty erase ^?
-export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-shopt -s checkwinsize histappend
-HISTSIZE=1000
-HISTFILESIZE=2000
-PS1='\[\e[1;32m\]\u@red\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]\$ '
-alias ls='ls --color=auto'
-alias ll='ls -lah --color=auto'
-alias la='ls -A --color=auto'
-alias grep='grep --color=auto'
-alias ..='cd ..'
-alias rm='rm -i'
-alias cp='cp -i'
-alias mv='mv -i'
-""")
-            }
-            val startupFile = File(rootDir, ".startup")
-            if (isNew || !startupFile.exists()) {
-                startupFile.writeText("""if [ ! -f /root/.init_done ]; then
-    echo '>>> First-time distro setup...'
-    if $pmUpdate 2>/dev/null && $pmInstall $pmQuiet nano wget sudo bash openssl 2>/dev/null; then
-        touch /root/.init_done
-        echo '>>> Setup complete.'
-    else
-        echo '>>> Setup was interrupted or failed - starting a repair shell.'
-        echo ">>> Run manually: $pmUpdate && $pmInstall $pmQuiet nano wget sudo bash openssl"
-    fi
-fi
-if command -v bash >/dev/null 2>&1; then
-    exec bash -i
-fi
-""")
-            }
-        } catch (e: Exception) {
-            android.util.Log.w("TerminalActivity", "writeShellConfigs failed: ${e.message}")
-        }
-    }
-
-    private fun createNewSession() {
-        val prefs = prefs()
-        val scrollback = Prefs.SCROLLBACK_ROWS[prefs.getInt(Prefs.KEY_SCROLLBACK, Prefs.SCROLLBACK_DEFAULT).coerceIn(0, 9)]
-        val rootfsDir = DistroInstaller(applicationContext).getRootfsDir(distroName)
+    private fun requestNewSession(requestedDistro: String) {
+        val rootfsDir = DistroInstaller(applicationContext).getRootfsDir(requestedDistro)
         if (!rootfsDir.exists()) {
-            showError("Distro $distroName not installed.\nRun installer first.")
+            showError("Distro $requestedDistro not installed.\nRun installer first.")
             return
         }
-
-        val backend = terminalBackend ?: TerminalBackend(terminalView, this).also {
-            terminalBackend = it
-            terminalView.setTerminalViewClient(it)
-            wireBackend(it)
-        }
-
-        // Heavy rootfs prep + launch-script write off the UI thread so session
-        // creation never blocks typing/rendering. The TerminalSession itself
-        // (and view attach) is created back on the main thread.
-        lifecycleScope.launch(Dispatchers.IO) {
-            val repairLog = DistroInstaller(applicationContext).repairRootfs(rootfsDir)
-            if (repairLog.contains("WARN") || repairLog.contains("missing")) {
-                android.util.Log.w("TerminalActivity", "Rootfs issues:\n$repairLog")
-            }
-
-            // Ensure /tmp, /dev/shm, /run/shm and executable binaries in rootfs.
-            File(rootfsDir, "tmp").mkdirs()
-            File(rootfsDir, "dev/shm").mkdirs()
-            File(rootfsDir, "run").mkdirs()
-            File(rootfsDir, "run/shm").mkdirs()
-            val busybox = File(rootfsDir, "bin/busybox")
-            if (busybox.exists() && !busybox.canExecute()) busybox.setExecutable(true, false)
-            for (name in listOf("sh", "ash", "bash")) {
-                val f = File(rootfsDir, "bin/$name")
-                if (f.exists() && !f.canExecute()) f.setExecutable(true, false)
-            }
-
-            writeShellConfigs(rootfsDir)
-
-            // ---- Distro init & proot launch ----
-            val nativeLibDir = applicationInfo.nativeLibraryDir
-            val prootBin = com.redtermapp.proot.ProotInstaller.getProotPath(this@TerminalActivity)
-                ?: "$nativeLibDir/libproot.so"
-            val prootLoader = "$nativeLibDir/libloader.so"
-            val prootLoader32 = "$nativeLibDir/libloader32.so"
-            val ldr32 = if (File(prootLoader32).exists()) "export PROOT_LOADER_32=$prootLoader32\n" else ""
-            val rp = rootfsDir.absolutePath
-            val startHost = filesDir.absolutePath
-            val sessionId = java.util.UUID.randomUUID().toString().replace("-", "").take(Prefs.SESSION_ID_LENGTH)
-            val launchSh = File(filesDir, "launch_$sessionId.sh")
-            launchSh.parentFile?.mkdirs()
-            val tz = java.util.TimeZone.getDefault().id
-            launchSh.writeText("""#!/system/bin/sh
-export HOME=/root
-export TERM=xterm-256color
-export LANG=C.UTF-8
-export LC_ALL=C.UTF-8
-export TZ="$tz"
-export TMPDIR=/tmp
-export PATH=/system/bin:/system/xbin:/bin:/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
-export ENV=/root/.startup
-# Libuv (Node.js / opencode) I/O concurrency. Inherited by the guest shell.
-export UV_THREADPOOL_SIZE=${Prefs.UV_THREADPOOL_SIZE}
-export PROOT_LOADER=$prootLoader
-${ldr32}export PROOT_TMP_DIR=$rp/tmp
-mkdir -p "$rp/tmp" "$rp/dev/shm" "$rp/run/shm"
-# Raise soft resource limits so heavy programs (compilers, AI CLIs, servers)
-# get enough file descriptors and processes. Silently no-ops if already higher.
-ulimit -n ${Prefs.ULIMIT_NOFILE} 2>/dev/null
-ulimit -u ${Prefs.ULIMIT_NPROC} 2>/dev/null
-exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd --kill-on-exit \
-    -b /dev -b /proc -b /sys -b /system -b /apex -b /linkerconfig/ld.config.txt \
-    -b /sdcard -b /storage -b /mnt \
-    /bin/sh -i 2>&1
-""")
-            launchSh.setExecutable(true, false)
-
-            val args = arrayOf("-c", launchSh.absolutePath)
-
-            withContext(Dispatchers.Main) {
-                val s = TerminalSession(
-                    "/system/bin/sh", startHost,
-                    args, emptyArray(),
-                    scrollback,
-                    backend
-                )
-                s.mSessionName = distroName
-
-                wireBackend(backend)
-
-                sessionLaunchScripts[s] = launchSh.absolutePath
-                sessionModel.addSession(s)
-                 currentFontSize = prefs.getInt("font_size", 20)
-                 terminalView.setTextSize(currentFontSize)
-                 applyFontFromPrefs(prefs)
-                 terminalView.setBackgroundColor(terminalBgWithAlpha())
-                 terminalView.attachSession(s)
-                terminalView.onScreenUpdated()
-
-                terminalView.post {
-                    terminalView.requestFocus()
-                    terminalView.isFocusableInTouchMode = true
-                }
-
-                updateDrawer()
-                RedTermWidgetProvider.updateAll(this@TerminalActivity)
-            }
-        }
+        ContextCompat.startForegroundService(
+            this,
+            Intent(this, TerminalService::class.java).apply {
+                action = TerminalService.ACTION_CREATE_SESSION
+                putExtra(TerminalService.EXTRA_DISTRO, requestedDistro)
+            },
+        )
     }
 
     private fun switchToSession(index: Int) {
         if (index !in sessions.indices || index == currentIndex) return
-        sessionModel.switchToSession(index)
+        sessionStore.switchToSession(index)
         terminalView.attachSession(sessions[index])
         terminalView.onScreenUpdated()
         updateDrawer()
     }
-    private fun handleSessionFinished(finishedSession: TerminalSession) {
-        val idx = sessions.indexOf(finishedSession)
-        if (idx < 0) return
-        sessionLaunchScripts.remove(finishedSession)?.let { path -> File(path).delete() }
-        sessionModel.removeSession(idx)
+    private fun handleSessionFinished() {
         if (sessions.isEmpty()) {
             finish()
         } else {
@@ -646,15 +506,9 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
         RedTermWidgetProvider.updateAll(this)
     }
 
-    private fun sweepStaleLaunchScripts() {
-        val active = sessionLaunchScripts.values.toHashSet()
-        filesDir.listFiles { _, name -> name.startsWith("launch_") && name.endsWith(".sh") }
-            ?.forEach { if (it.absolutePath !in active) it.delete() }
-    }
-
     private fun closeSession(index: Int) {
         if (sessions.size <= 1) return
-        sessionModel.removeSession(index)
+        sessionStore.removeSession(index)
         if (currentIndex in sessions.indices) {
             terminalView.attachSession(sessions[currentIndex])
             terminalView.onScreenUpdated()
@@ -823,11 +677,6 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
     }
 
     private fun startForegroundService() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
-                != PackageManager.PERMISSION_GRANTED
-            ) return
-        }
         try {
             ContextCompat.startForegroundService(this, Intent(this, TerminalService::class.java))
         } catch (e: Exception) {
@@ -869,30 +718,33 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        if (sessions.isNotEmpty()) {
-            val newDistro = intent.getStringExtra(EXTRA_DISTRO)
-            val target = if (newDistro != null)
-                sessions.indexOfFirst { it.mSessionName.equals(newDistro, ignoreCase = true) }
-            else -1
-            if (target >= 0) {
-                sessionModel.switchToSession(target)
-                terminalView.attachSession(sessions[target])
-            } else if (currentIndex in sessions.indices) {
-                terminalView.attachSession(sessions[currentIndex])
-            }
+        val newDistro = intent.getStringExtra(EXTRA_DISTRO) ?: return
+        distroName = newDistro
+        prefs().edit().putString(Prefs.KEY_LAST_DISTRO, distroName).apply()
+        updateDistroSizeLabel()
+
+        val target = sessionStore.indexOfSessionForDistro(newDistro)
+        if (target >= 0) {
+            sessionStore.switchToSession(target)
+            terminalView.attachSession(sessions[target])
             terminalView.onScreenUpdated()
             terminalView.requestFocus()
+            updateDrawer()
+        } else {
+            requestNewSession(newDistro)
         }
     }
 
     override fun onDestroy() {
         RedTermWidgetProvider.updateAll(this)
-        unregisterReceiver(nightReceiver)
-        if (sessions.isEmpty()) {
-            stopService(Intent(this, TerminalService::class.java))
-            TerminalViewModel.clearIfEmpty()
+        try { unregisterReceiver(nightReceiver) } catch (_: IllegalArgumentException) {}
+        terminalBackend?.let {
+            sessionStore.detachClient(it)
+            it.onSessionFinished = null
+            it.onLinkTap = null
+            it.onModifierConsumed = null
+            it.onEmulatorReady = null
         }
-        terminalBackend?.onSessionFinished = null
         terminalBackend = null
         super.onDestroy()
     }
@@ -961,11 +813,6 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
         themeSub.add(0, 70, 0, "Custom")
         themeSub.add(0, 79, 0, "Dynamic")
         menu.add(0, 9, 0, "Snippets")
-    }
-
-    override fun onContextMenuClosed(menu: Menu) {
-        terminalView.onContextMenuClosed(menu)
-        super.onContextMenuClosed(menu)
     }
 
     private fun resolveTerminalColors(): Triple<Int, Int, Int> {
@@ -1052,9 +899,7 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
         session?.reset()
         prefs.edit().putString("font", "monospace").apply()
         applyFontFromPrefs(prefs)
-        currentFontSize = 20
-        prefs.edit().putInt("font_size", 20).apply()
-        terminalView.setTextSize(20)
+        terminalBackend?.setFontSize(Prefs.FONT_SIZE_DEFAULT)
         applyTerminalTheme("amoled")
     }
 
@@ -1064,8 +909,8 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
             12 -> { copySelectedText(); true }
             13 -> { pasteClipboard(); true }
             14 -> { exportCurrentOutput(); true }
-            3 -> { currentFontSize = (currentFontSize + 2).coerceAtMost(36); terminalView.setTextSize(currentFontSize); true }
-            4 -> { currentFontSize = (currentFontSize - 2).coerceAtLeast(8); terminalView.setTextSize(currentFontSize); true }
+            3 -> { terminalBackend?.let { it.setFontSize((it.currentFontSize + 2).coerceAtMost(36)) }; true }
+            4 -> { terminalBackend?.let { it.setFontSize((it.currentFontSize - 2).coerceAtLeast(8)) }; true }
              5 -> { resetTerminalDefaults(prefs); true }
               61 -> { applyTerminalTheme("default"); true }
               62 -> { applyTerminalTheme("green"); true }
@@ -1128,10 +973,6 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
         return tf ?: android.graphics.Typeface.MONOSPACE
     }
 
-    private fun applyFontToView(view: com.termux.view.TerminalView, prefs: android.content.SharedPreferences) {
-        view.setTypeface(fontFromPrefs(prefs))
-    }
-
     private fun applyTheme() {
         AppTheme.apply(this)
         val prefs = prefs()
@@ -1166,7 +1007,7 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
             if (names.isNotEmpty() && which < contents.size) {
                 val content = contents[which]
                 val session = terminalView.mTermSession ?: return@setItems
-                session.write(content.toByteArray(), 0, content.length)
+                session.write(content)
             }
         }
         builder.setPositiveButton("+ Add") { _, _ -> showAddSnippetDialog() }
@@ -1191,7 +1032,7 @@ exec $prootBin -0 -L -r "$rp" -w /root --link2symlink --sysvipc --ashmem-memfd -
         layout.addView(nameInput)
         layout.addView(input)
 
-        val dialog = android.app.AlertDialog.Builder(this)
+        android.app.AlertDialog.Builder(this)
             .setTitle("Add Snippet")
             .setView(layout)
             .setPositiveButton("Save") { _, _ ->

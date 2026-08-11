@@ -11,10 +11,8 @@
         <item name="terminalBg">@color/terminal_bg</item>
         <item name="terminalText">@color/terminal_text</item>
         <item name="extraKeysBg">@color/extra_keys_bg</item>
-        <item name="extraKeysText">@color/extra_keys_text</item>
         <item name="mutedText">@color/muted_text</item>
         <item name="hintText">@color/hint_text</item>
-        <item name="dividerColor">@color/divider</item>
         <item name="modifierHighlight">@color/modifier_highlight</item>
     </style>
 
@@ -29,10 +27,8 @@
         <item name="terminalBg">@color/amoled_bg</item>
         <item name="terminalText">@color/amoled_text</item>
         <item name="extraKeysBg">@color/amoled_extra_keys_bg</item>
-        <item name="extraKeysText">@color/amoled_extra_keys_text</item>
         <item name="mutedText">@color/amoled_muted_text</item>
         <item name="hintText">@color/amoled_hint_text</item>
-        <item name="dividerColor">@color/amoled_divider</item>
         <item name="modifierHighlight">@color/amoled_modifier_highlight</item>
     </style>
 
@@ -47,10 +43,8 @@
         <item name="terminalBg">@color/green_bg</item>
         <item name="terminalText">@color/green_text</item>
         <item name="extraKeysBg">@color/green_extra_keys_bg</item>
-        <item name="extraKeysText">@color/green_extra_keys_text</item>
         <item name="mutedText">@color/green_muted_text</item>
         <item name="hintText">@color/green_hint_text</item>
-        <item name="dividerColor">@color/green_divider</item>
         <item name="modifierHighlight">@color/green_modifier_highlight</item>
     </style>
 
@@ -67,10 +61,8 @@
         <item name="terminalBg">@color/light_bg</item>
         <item name="terminalText">@color/light_text</item>
         <item name="extraKeysBg">@color/light_extra_keys_bg</item>
-        <item name="extraKeysText">@color/light_extra_keys_text</item>
         <item name="mutedText">@color/light_muted_text</item>
         <item name="hintText">@color/light_hint_text</item>
-        <item name="dividerColor">@color/light_divider</item>
         <item name="modifierHighlight">@color/light_modifier_highlight</item>
     </style>
 
@@ -85,10 +77,8 @@
         <item name="terminalBg">@color/dracula_bg</item>
         <item name="terminalText">@color/dracula_text</item>
         <item name="extraKeysBg">@color/dracula_extra_keys_bg</item>
-        <item name="extraKeysText">@color/dracula_extra_keys_text</item>
         <item name="mutedText">@color/dracula_muted_text</item>
         <item name="hintText">@color/dracula_hint_text</item>
-        <item name="dividerColor">@color/dracula_divider</item>
         <item name="modifierHighlight">@color/dracula_modifier_highlight</item>
     </style>
 
@@ -103,10 +93,8 @@
         <item name="terminalBg">@color/nord_bg</item>
         <item name="terminalText">@color/nord_text</item>
         <item name="extraKeysBg">@color/nord_extra_keys_bg</item>
-        <item name="extraKeysText">@color/nord_extra_keys_text</item>
         <item name="mutedText">@color/nord_muted_text</item>
         <item name="hintText">@color/nord_hint_text</item>
-        <item name="dividerColor">@color/nord_divider</item>
         <item name="modifierHighlight">@color/nord_modifier_highlight</item>
     </style>
 
@@ -121,10 +109,8 @@
         <item name="terminalBg">@color/tokyo_bg</item>
         <item name="terminalText">@color/tokyo_text</item>
         <item name="extraKeysBg">@color/tokyo_extra_keys_bg</item>
-        <item name="extraKeysText">@color/tokyo_extra_keys_text</item>
         <item name="mutedText">@color/tokyo_muted_text</item>
         <item name="hintText">@color/tokyo_hint_text</item>
-        <item name="dividerColor">@color/tokyo_divider</item>
         <item name="modifierHighlight">@color/tokyo_modifier_highlight</item>
     </style>
 
@@ -139,10 +125,8 @@
         <item name="terminalBg">@color/gruvbox_bg</item>
         <item name="terminalText">@color/gruvbox_text</item>
         <item name="extraKeysBg">@color/gruvbox_extra_keys_bg</item>
-        <item name="extraKeysText">@color/gruvbox_extra_keys_text</item>
         <item name="mutedText">@color/gruvbox_muted_text</item>
         <item name="hintText">@color/gruvbox_hint_text</item>
-        <item name="dividerColor">@color/gruvbox_divider</item>
         <item name="modifierHighlight">@color/gruvbox_modifier_highlight</item>
     </style>
 
@@ -157,10 +141,8 @@
         <item name="terminalBg">@color/red_bg</item>
         <item name="terminalText">@color/red_text</item>
         <item name="extraKeysBg">@color/red_extra_keys_bg</item>
-        <item name="extraKeysText">@color/red_extra_keys_text</item>
         <item name="mutedText">@color/red_muted_text</item>
         <item name="hintText">@color/red_hint_text</item>
-        <item name="dividerColor">@color/red_divider</item>
         <item name="modifierHighlight">@color/red_modifier_highlight</item>
     </style>
 
@@ -175,10 +157,8 @@
         <item name="terminalBg">@color/terminal_bg</item>
         <item name="terminalText">@color/terminal_text</item>
         <item name="extraKeysBg">@color/extra_keys_bg</item>
-        <item name="extraKeysText">@color/extra_keys_text</item>
         <item name="mutedText">@color/muted_text</item>
         <item name="hintText">@color/hint_text</item>
-        <item name="dividerColor">@color/divider</item>
         <item name="modifierHighlight">@color/modifier_highlight</item>
     </style>
 </resources>

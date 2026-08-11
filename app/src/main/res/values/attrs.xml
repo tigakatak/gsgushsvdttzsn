@@ -3,10 +3,8 @@
     <attr name="terminalBg" format="color" />
     <attr name="terminalText" format="color" />
     <attr name="extraKeysBg" format="color" />
-    <attr name="extraKeysText" format="color" />
     <attr name="themeAccent" format="color" />
     <attr name="mutedText" format="color" />
     <attr name="hintText" format="color" />
-    <attr name="dividerColor" format="color" />
     <attr name="modifierHighlight" format="color" />
 </resources>

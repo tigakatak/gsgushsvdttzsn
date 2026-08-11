@@ -1,19 +1,19 @@
 package com.redtermapp.ui
 
-import android.app.Application
 import android.content.Context
 import android.os.Environment
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.redtermapp.distro.DistroInstaller
+import com.redtermapp.session.terminalSessionStore
 import com.redtermapp.util.Format
 import java.io.File
 
 object DistroUi {
 
     fun deleteDistro(activity: AppCompatActivity, installer: DistroInstaller, name: String) {
-        TerminalViewModel.get(activity.application as Application).removeSessionsForDistro(name)
+        activity.terminalSessionStore.removeSessionsForDistro(name)
         installer.uninstall(name)
         RedTermWidgetProvider.updateAll(activity)
     }

@@ -13,17 +13,19 @@ import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
 import com.termux.view.TerminalView
 import com.termux.view.TerminalViewClient
+import kotlin.math.roundToInt
 
 class TerminalBackend(
     val view: TerminalView,
-    private val context: Context
+    context: Context
 ) : TerminalSessionClient, TerminalViewClient {
+
+    private val context = context.applicationContext
 
     private var ctrlDown = false
     private var altDown = false
-    private var fontSize = 14f
+    private var fontSize = context.prefs().getInt(Prefs.KEY_FONT_SIZE, Prefs.FONT_SIZE_DEFAULT).toFloat()
     var onSessionFinished: ((TerminalSession) -> Unit)? = null
-    var onTap: (() -> Unit)? = null
     var onLinkTap: ((String, Boolean) -> Unit)? = null
     var onModifierConsumed: (() -> Unit)? = null
     var onEmulatorReady: (() -> Unit)? = null
@@ -35,7 +37,7 @@ class TerminalBackend(
     override fun onTitleChanged(session: TerminalSession) {}
 
     override fun onSessionFinished(session: TerminalSession) {
-        onSessionFinished?.invoke(session)
+        view.post { onSessionFinished?.invoke(session) }
     }
 
     override fun onCopyTextToClipboard(session: TerminalSession, text: String) {
@@ -68,9 +70,26 @@ class TerminalBackend(
 
     override fun onScale(scale: Float): Float {
         fontSize = (fontSize * scale).coerceIn(8f, 36f)
-        view.setTextSize(fontSize.toInt())
-        return scale
+        val size = fontSize.roundToInt()
+        view.setTextSize(size)
+        context.prefs().edit().putInt(Prefs.KEY_FONT_SIZE, size).apply()
+        return 1f
     }
+
+    fun applyFontSize() {
+        fontSize = context.prefs().getInt(Prefs.KEY_FONT_SIZE, Prefs.FONT_SIZE_DEFAULT).toFloat()
+        view.setTextSize(fontSize.roundToInt())
+    }
+
+    fun setFontSize(size: Int) {
+        val clamped = size.coerceIn(8, 36)
+        fontSize = clamped.toFloat()
+        context.prefs().edit().putInt(Prefs.KEY_FONT_SIZE, clamped).apply()
+        view.setTextSize(clamped)
+    }
+
+    val currentFontSize: Int
+        get() = fontSize.roundToInt()
 
     override fun onSingleTapUp(e: MotionEvent) {
         val session = view.mTermSession
@@ -91,7 +110,6 @@ class TerminalBackend(
                 imm.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
             }
         }
-        onTap?.invoke()
     }
 
     private val urlRegex = Regex("""https?://[^\s"'<>()\[\]{}]+|www\.[^\s"'<>()\[\]{}]+""")

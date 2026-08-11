@@ -299,14 +299,14 @@ class SettingsActivity : AppCompatActivity() {
                         setCancelable(false)
                     }
                     dialog.show()
-                    Thread {
+                    lifecycleScope.launch(Dispatchers.IO) {
                         var done = 0
                         var failed = 0
                         for (distro in targets) {
                             if (installer.backup(distro, outDir)) done++ else failed++
                         }
-                        runOnUiThread {
-                            dialog.dismiss()
+                        withContext(Dispatchers.Main) {
+                            if (!isFinishing && !isDestroyed) dialog.dismiss()
                             val msg = if (failed == 0) {
                                 "Backed up $done distro(s): $outDir"
                             } else {
@@ -314,7 +314,7 @@ class SettingsActivity : AppCompatActivity() {
                             }
                             Toast.makeText(this@SettingsActivity, msg, Toast.LENGTH_LONG).show()
                         }
-                    }.start()
+                    }
                 }
                 .setNegativeButton("Cancel", null)
                 .show()
@@ -340,18 +340,25 @@ class SettingsActivity : AppCompatActivity() {
                         .removeSuffix("_backup.tar.gz")
                         .removeSuffix(".tar.xz")
                         .removeSuffix(".tar.gz")
-                    val rootfsDir = installer.getRootfsDir(distroName)
+                    val rootfsDir = try {
+                        installer.getRootfsDir(distroName)
+                    } catch (e: IllegalArgumentException) {
+                        Toast.makeText(
+                            this, "Invalid distro archive name: ${backupFile.name}", Toast.LENGTH_LONG
+                        ).show()
+                        return@setItems
+                    }
                     if (rootfsDir.exists()) {
                         androidx.appcompat.app.AlertDialog.Builder(this)
                             .setTitle("Overwrite $distroName?")
                             .setMessage("The existing rootfs will be deleted and replaced.")
                             .setPositiveButton("Overwrite") { _, _ ->
-                                restoreDistro(backupFile, distroName, rootfsDir)
+                                restoreDistro(backupFile, distroName)
                             }
                             .setNegativeButton("Cancel", null)
                             .show()
                     } else {
-                        restoreDistro(backupFile, distroName, rootfsDir)
+                        restoreDistro(backupFile, distroName)
                     }
                 }
                 .setNegativeButton("Cancel", null)
@@ -361,7 +368,7 @@ class SettingsActivity : AppCompatActivity() {
         versionInfo.text = "${getString(R.string.app_name)} v${BuildConfig.VERSION_NAME}"
     }
 
-    private fun restoreDistro(backupFile: java.io.File, distroName: String, rootfsDir: java.io.File) {
+    private fun restoreDistro(backupFile: java.io.File, distroName: String) {
         val isBackup = backupFile.name.endsWith("_backup.tar.gz")
         val dialog = android.app.ProgressDialog(this).apply {
             setTitle(if (isBackup) "Restoring $distroName" else "Installing $distroName")
@@ -371,72 +378,23 @@ class SettingsActivity : AppCompatActivity() {
         }
         dialog.show()
 
-        if (isBackup) {
-            Thread {
-                try {
-                    rootfsDir.deleteRecursively()
-                    rootfsDir.mkdirs()
-                    val pb = ProcessBuilder(
-                        "tar", "-xzf", backupFile.absolutePath, "-C", rootfsDir.absolutePath
-                    )
-                    pb.redirectErrorStream(true)
-                    val proc = pb.start()
-                    try {
-                        proc.inputStream.use { it.readBytes() }
-                        proc.waitFor()
-                    } finally {
-                        proc.destroy()
-                    }
-                    if (!java.io.File(rootfsDir, "etc/os-release").exists() &&
-                        !java.io.File(rootfsDir, "bin/busybox").exists()) {
-                        val subdirs = rootfsDir.listFiles { f -> f.isDirectory } ?: emptyArray()
-                        if (subdirs.size == 1) {
-                            val nested = subdirs[0]
-                            nested.listFiles()?.forEach { it.renameTo(java.io.File(rootfsDir, it.name)) }
-                            nested.delete()
-                        }
-                    }
-                    if (!java.io.File(rootfsDir, "etc/os-release").exists() &&
-                        !java.io.File(rootfsDir, "bin/busybox").exists()
-                    ) {
-                        throw RuntimeException("Backup does not look like a RedTerm distro")
-                    }
-                    com.redtermapp.util.Format.invalidate(rootfsDir)
-                    installer.saveInstalled(distroName)
-                    installer.repairRootfs(rootfsDir)
-                    runOnUiThread {
-                        dialog.dismiss()
-                        Toast.makeText(
-                            this@SettingsActivity, "$distroName restored", Toast.LENGTH_LONG
-                        ).show()
-                        populateDistroList()
-                    }
-                } catch (e: Exception) {
-                    runOnUiThread {
-                        dialog.dismiss()
-                        Toast.makeText(
-                            this@SettingsActivity, "Restore error: ${e.message}", Toast.LENGTH_LONG
-                        ).show()
-                    }
-                }
-            }.start()
-        } else {
-            lifecycleScope.launch {
-                try {
-                    withContext(Dispatchers.IO) {
-                        installer.installFromFile(backupFile, distroName) {}
-                    }
-                    dialog.dismiss()
-                    Toast.makeText(
-                        this@SettingsActivity, "$distroName installed", Toast.LENGTH_LONG
-                    ).show()
-                    populateDistroList()
-                } catch (e: Exception) {
-                    dialog.dismiss()
-                    Toast.makeText(
-                        this@SettingsActivity, "Install error: ${e.message}", Toast.LENGTH_LONG
-                    ).show()
-                }
+        lifecycleScope.launch {
+            try {
+                installer.installFromFile(backupFile, distroName) {}
+                if (!isFinishing && !isDestroyed) dialog.dismiss()
+                Toast.makeText(
+                    this@SettingsActivity,
+                    if (isBackup) "$distroName restored" else "$distroName installed",
+                    Toast.LENGTH_LONG
+                ).show()
+                populateDistroList()
+            } catch (e: Exception) {
+                if (!isFinishing && !isDestroyed) dialog.dismiss()
+                Toast.makeText(
+                    this@SettingsActivity,
+                    if (isBackup) "Restore error: ${e.message}" else "Install error: ${e.message}",
+                    Toast.LENGTH_LONG
+                ).show()
             }
         }
     }

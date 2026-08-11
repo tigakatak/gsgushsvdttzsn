@@ -4,6 +4,7 @@ import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import android.widget.Toast
 import com.redtermapp.distro.DistroInstaller
+import com.redtermapp.session.terminalSessionStore
 
 class QuickSettingsTile : TileService() {
 
@@ -35,7 +36,7 @@ class QuickSettingsTile : TileService() {
 
     private fun updateTile() {
         val tile = qsTile ?: return
-        val sessions = TerminalViewModel.get(application).sessions.value
+        val sessions = terminalSessionStore.sessions.value
         tile.state = if (sessions.isNotEmpty()) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
         tile.label = if (sessions.isNotEmpty()) "RedTerm (${sessions.size})" else "RedTerm"
         tile.updateTile()

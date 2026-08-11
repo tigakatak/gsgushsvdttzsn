@@ -227,9 +227,6 @@ class WelcomeActivity : AppCompatActivity() {
             return
         }
 
-        installer.uninstall(distro.name)
-        refreshDistroStates()
-
         isInstalling = true
         selectedDistro = distro
         selectedCard?.setCardBackgroundColor(themeColor(R.attr.extraKeysBg, 0xFF181825.toInt()))
@@ -246,6 +243,8 @@ class WelcomeActivity : AppCompatActivity() {
 
         installJob = lifecycleScope.launch {
             try {
+                withContext(Dispatchers.IO) { installer.uninstall(distro.name) }
+                refreshDistroStates()
                 installer.install(distro) { progress ->
                     runOnUiThread {
                         try {

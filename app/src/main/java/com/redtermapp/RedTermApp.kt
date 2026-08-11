@@ -5,11 +5,15 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
 import com.google.android.material.color.DynamicColors
+import com.redtermapp.session.TerminalSessionStore
 import com.redtermapp.ui.NightModeReceiver
 import com.redtermapp.ui.Prefs
 import com.redtermapp.util.CrashHandler
 
 class RedTermApp : Application() {
+
+    internal val terminalSessions = TerminalSessionStore()
+
     override fun onCreate() {
         super.onCreate()
         DynamicColors.applyToActivitiesIfAvailable(this)

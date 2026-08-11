@@ -174,23 +174,21 @@ class MainActivity : AppCompatActivity() {
                     .setMessage("Restoring base files...")
                     .setCancelable(false)
                     .show()
-                Thread {
-                    lifecycleScope.launch(Dispatchers.IO) {
-                        val ok = try {
-                            installer.resetToDefault(name) { }
-                        } catch (e: Exception) {
-                            false
-                        }
-                        withContext(Dispatchers.Main) {
-                            dialog.dismiss()
-                            if (ok) {
-                                Toast.makeText(this@MainActivity, "$name reset - next launch runs setup again", Toast.LENGTH_LONG).show()
-                            } else {
-                                Toast.makeText(this@MainActivity, "Reset failed. Check network and try again.", Toast.LENGTH_LONG).show()
-                            }
+                lifecycleScope.launch(Dispatchers.IO) {
+                    val ok = try {
+                        installer.resetToDefault(name) { }
+                    } catch (e: Exception) {
+                        false
+                    }
+                    withContext(Dispatchers.Main) {
+                        if (!isFinishing && !isDestroyed) dialog.dismiss()
+                        if (ok) {
+                            Toast.makeText(this@MainActivity, "$name reset - next launch runs setup again", Toast.LENGTH_LONG).show()
+                        } else {
+                            Toast.makeText(this@MainActivity, "Reset failed. Check network and try again.", Toast.LENGTH_LONG).show()
                         }
                     }
-                }.start()
+                }
             }
             .setNegativeButton("Cancel", null)
             .show()

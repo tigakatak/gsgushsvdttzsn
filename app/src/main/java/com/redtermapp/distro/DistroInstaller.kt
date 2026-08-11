@@ -174,6 +174,7 @@ class DistroInstaller(private val context: Context) {
     }
 
     private fun cleanup(distroName: String) {
+        if (runCatching { validateDistroName(distroName) }.isFailure) return
         try {
             val dir = getRootfsDir(distroName)
             dir.deleteRecursively()
@@ -303,6 +304,7 @@ class DistroInstaller(private val context: Context) {
     ) {
         val pb = ProcessBuilder(xzBin.absolutePath, "-dc", tarball.absolutePath)
         pb.environment()["LD_LIBRARY_PATH"] = xzBin.parentFile!!.absolutePath
+        pb.redirectErrorStream(true)
         val process = pb.start()
         try {
             process.inputStream.use { input ->
@@ -338,7 +340,6 @@ class DistroInstaller(private val context: Context) {
     ) {
         try {
             val total = tarball.length()
-            var extracted = 0L
             FileInputStream(tarball).use { fis ->
                 XZCompressorInputStream(fis).use { xzIn ->
                     BufferedInputStream(xzIn, 65536).use { bis ->
@@ -388,18 +389,22 @@ class DistroInstaller(private val context: Context) {
             }
         }
         var processed = 0L
-        var entryCount = 0
         fun processEntry(entry: org.apache.commons.compress.archivers.tar.TarArchiveEntry) {
             var entryName = entry.name
             if (prefixToStrip.isNotEmpty() && entryName.startsWith(prefixToStrip)) {
                 entryName = entryName.removePrefix(prefixToStrip)
             }
             if (entryName.isEmpty()) return
-            val target = File(dest, entryName)
+            val canonicalDest = dest.canonicalFile
+            val target = File(dest, entryName).canonicalFile
+            val isInsideDestination = target != canonicalDest &&
+                target.path.startsWith(canonicalDest.path + File.separator)
+            if (!isInsideDestination) {
+                throw Exception("Unsafe archive entry: ${entry.name}")
+            }
             if (entry.isSymbolicLink) {
                 val linkTarget = entry.linkName
                 try {
-                    val canonicalDest = dest.canonicalFile
                     val canonicalTarget = target.parentFile?.canonicalFile
                     val resolvedTarget = canonicalTarget?.resolve(linkTarget)?.canonicalFile
                     val isSafe = resolvedTarget != null &&
@@ -441,7 +446,6 @@ class DistroInstaller(private val context: Context) {
         while (entry != null) {
             checkCancel()
             processEntry(entry)
-            entryCount++
             val pct = if (totalCompressed > 0) {
                 ((processed * 100L) / (totalCompressed * 3L)).toInt().coerceAtMost(99)
             } else 0
@@ -568,17 +572,25 @@ class DistroInstaller(private val context: Context) {
             val innerBin = File(subdir, "bin")
             if (innerBin.exists()) {
                 repairs.add("Found nested rootfs in ${subdir.name}/, migrating...")
+                var copyOk = true
                 subdir.listFiles()?.forEach { file ->
                     val dest = File(rootfs, file.name)
                     if (file.isDirectory) {
-                        file.copyRecursively(dest, overwrite = true)
-                        file.deleteRecursively()
+                        if (!file.copyRecursively(dest, overwrite = true)) copyOk = false
                     } else {
-                        file.copyTo(dest, overwrite = true)
-                        file.delete()
+                        try {
+                            file.copyTo(dest, overwrite = true)
+                        } catch (_: Exception) {
+                            copyOk = false
+                        }
                     }
                 }
-                repairs.add("Migrated files from ${subdir.name}/ to rootfs")
+                if (copyOk) {
+                    subdir.deleteRecursively()
+                    repairs.add("Migrated files from ${subdir.name}/ to rootfs")
+                } else {
+                    repairs.add("WARN: Failed to fully migrate ${subdir.name}/")
+                }
             }
         }
 
@@ -628,15 +640,32 @@ class DistroInstaller(private val context: Context) {
     }
 
     fun isInstalled(distroName: String): Boolean =
-        File(context.filesDir, "installed/${distroName}").exists()
+        File(context.filesDir, "installed/${validateDistroName(distroName)}").exists()
 
-    fun getRootfsDir(distroName: String): File =
-        File(context.filesDir, "rootfs/$distroName")
+    fun getRootfsDir(distroName: String): File {
+        val validName = validateDistroName(distroName)
+
+        val rootfsParent = File(context.filesDir, "rootfs").canonicalFile
+        val rootfsDir = File(rootfsParent, validName).canonicalFile
+        require(rootfsDir.parentFile == rootfsParent) { "Invalid distro path" }
+        return rootfsDir
+    }
 
     fun saveInstalled(distroName: String) {
+        val validName = validateDistroName(distroName)
         File(context.filesDir, "installed").mkdirs()
-        File(context.filesDir, "installed/$distroName").writeText(distroName)
+        File(context.filesDir, "installed/$validName").writeText(validName)
         notifyDocumentRootsChanged()
+    }
+
+    private fun validateDistroName(distroName: String): String {
+        require(distroName.isNotBlank()) { "Distro name cannot be empty" }
+        require(distroName == distroName.trim()) { "Invalid distro name" }
+        require(distroName != "." && distroName != "..") { "Invalid distro name" }
+        require('/' !in distroName && '\\' !in distroName && '\u0000' !in distroName) {
+            "Invalid distro name"
+        }
+        return distroName
     }
 
     fun getInstalledDistros(): List<String> {

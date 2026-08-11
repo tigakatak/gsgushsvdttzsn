@@ -8,6 +8,7 @@ import android.content.Intent
 import android.widget.RemoteViews
 import com.redtermapp.R
 import com.redtermapp.distro.DistroInstaller
+import com.redtermapp.session.terminalSessionStore
 import com.redtermapp.util.Format
 
 class RedTermWidgetProvider : AppWidgetProvider() {
@@ -60,9 +61,7 @@ class RedTermWidgetProvider : AppWidgetProvider() {
             val rootfsDir = installer.getRootfsDir(distro)
             val cached = Format.cachedSize(rootfsDir)
             val sizeStr = if (cached != null) Format.size(cached) else ""
-            val sessionCount = TerminalViewModel.get(
-                context.applicationContext as android.app.Application
-            ).sessions.value.size
+            val sessionCount = context.terminalSessionStore.sessions.value.size
             views.setTextViewText(R.id.widget_distro_status, "$sizeStr · $sessionCount session(s)")
             views.setTextViewText(
                 R.id.widget_session_count,

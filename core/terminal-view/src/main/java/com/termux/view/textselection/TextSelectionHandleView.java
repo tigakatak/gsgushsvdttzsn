@@ -328,8 +328,4 @@ public class TextSelectionHandleView extends View {
         return this.getParent() == null;
     }
 
-    public boolean isDragging() {
-        return mIsDragging;
-    }
-
 }
