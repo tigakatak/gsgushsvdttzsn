@@ -353,12 +353,12 @@ class SettingsActivity : AppCompatActivity() {
                             .setTitle("Overwrite $distroName?")
                             .setMessage("The existing rootfs will be deleted and replaced.")
                             .setPositiveButton("Overwrite") { _, _ ->
-                                restoreDistro(backupFile, distroName)
+                                restoreDistro(backupFile, distroName, rootfsDir)
                             }
                             .setNegativeButton("Cancel", null)
                             .show()
                     } else {
-                        restoreDistro(backupFile, distroName)
+                        restoreDistro(backupFile, distroName, rootfsDir)
                     }
                 }
                 .setNegativeButton("Cancel", null)
@@ -368,7 +368,7 @@ class SettingsActivity : AppCompatActivity() {
         versionInfo.text = "${getString(R.string.app_name)} v${BuildConfig.VERSION_NAME}"
     }
 
-    private fun restoreDistro(backupFile: java.io.File, distroName: String) {
+    private fun restoreDistro(backupFile: java.io.File, distroName: String, rootfsDir: java.io.File) {
         val isBackup = backupFile.name.endsWith("_backup.tar.gz")
         val dialog = android.app.ProgressDialog(this).apply {
             setTitle(if (isBackup) "Restoring $distroName" else "Installing $distroName")
@@ -380,7 +380,42 @@ class SettingsActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             try {
-                installer.installFromFile(backupFile, distroName) {}
+                withContext(Dispatchers.IO) {
+                    if (isBackup) {
+                        rootfsDir.deleteRecursively()
+                        rootfsDir.mkdirs()
+                        val pb = ProcessBuilder(
+                            "tar", "-xzf", backupFile.absolutePath, "-C", rootfsDir.absolutePath
+                        )
+                        pb.redirectErrorStream(true)
+                        val proc = pb.start()
+                        try {
+                            proc.inputStream.use { it.readBytes() }
+                            proc.waitFor()
+                        } finally {
+                            proc.destroy()
+                        }
+                        if (!File(rootfsDir, "etc/os-release").exists() &&
+                            !File(rootfsDir, "bin/busybox").exists()) {
+                            val subdirs = rootfsDir.listFiles { f -> f.isDirectory } ?: emptyArray()
+                            if (subdirs.size == 1) {
+                                val nested = subdirs[0]
+                                nested.listFiles()?.forEach { it.renameTo(File(rootfsDir, it.name)) }
+                                nested.delete()
+                            }
+                        }
+                        if (!File(rootfsDir, "etc/os-release").exists() &&
+                            !File(rootfsDir, "bin/busybox").exists()
+                        ) {
+                            throw RuntimeException("Backup does not look like a RedTerm distro")
+                        }
+                        com.redtermapp.util.Format.invalidate(rootfsDir)
+                        installer.saveInstalled(distroName)
+                        installer.repairRootfs(rootfsDir)
+                    } else {
+                        installer.installFromFile(backupFile, distroName) {}
+                    }
+                }
                 if (!isFinishing && !isDestroyed) dialog.dismiss()
                 Toast.makeText(
                     this@SettingsActivity,

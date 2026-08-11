@@ -64,6 +64,7 @@ class NightModeReceiver : BroadcastReceiver() {
             val nowNight = isNightModeActive(prefs)
             prefs.edit().putBoolean("night_flag", nowNight).apply()
             val i = Intent(ACTION_CHANGED).apply {
+                putExtra("is_night", nowNight)
                 setPackage(context.packageName)
             }
             context.sendBroadcast(i)
