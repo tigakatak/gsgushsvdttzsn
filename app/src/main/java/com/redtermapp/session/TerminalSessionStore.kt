@@ -27,10 +27,11 @@ internal class TerminalSessionStore {
         distroName: String,
         clientBridge: TerminalSessionClientBridge,
     ) {
-        sessionDistros[session] = distroName
-        sessionClients[session] = clientBridge
-        _sessions.update { it + session }
-        _currentIndex.value = _sessions.value.size - 1
+        synchronized(this) {
+            sessionDistros[session] = distroName
+            sessionClients[session] = clientBridge
+            _sessions.value = _sessions.value + session
+        }
     }
 
     fun indexOfSessionForDistro(distroName: String): Int =
@@ -47,70 +48,91 @@ internal class TerminalSessionStore {
     }
 
     fun removeSession(index: Int) {
-        val current = _sessions.value
-        if (index !in current.indices) return
-        val removed = current[index]
-        _sessions.value = current.toMutableList().apply { removeAt(index) }
-        sessionDistros.remove(removed)
-        sessionClients.remove(removed)
-        removed.finishIfRunning()
-        if (_currentIndex.value >= _sessions.value.size) {
-            _currentIndex.value = _sessions.value.size - 1
-        } else if (index < _currentIndex.value) {
-            _currentIndex.value = _currentIndex.value - 1
+        synchronized(this) {
+            val current = _sessions.value
+            if (index !in current.indices) return
+            val removed = current[index]
+            _sessions.value = current.toMutableList().apply { removeAt(index) }
+            sessionDistros.remove(removed)
+            sessionClients.remove(removed)
+            removed.finishIfRunning()
+            if (_currentIndex.value >= _sessions.value.size) {
+                _currentIndex.value = _sessions.value.size - 1
+            } else if (index < _currentIndex.value) {
+                _currentIndex.value = _currentIndex.value - 1
+            }
         }
     }
 
     internal fun sessionFinished(session: TerminalSession) {
-        val index = _sessions.value.indexOf(session)
-        if (index < 0) return
-        val current = _sessions.value
-        _sessions.value = current.toMutableList().apply { removeAt(index) }
-        sessionDistros.remove(session)
-        sessionClients.remove(session)
-        if (_currentIndex.value >= _sessions.value.size) {
-            _currentIndex.value = _sessions.value.size - 1
-        } else if (index < _currentIndex.value) {
-            _currentIndex.value--
+        synchronized(this) {
+            val index = _sessions.value.indexOf(session)
+            if (index < 0) return
+            val current = _sessions.value
+            _sessions.value = current.toMutableList().apply { removeAt(index) }
+            sessionDistros.remove(session)
+            sessionClients.remove(session)
+            if (_currentIndex.value >= _sessions.value.size) {
+                _currentIndex.value = _sessions.value.size - 1
+            } else if (index < _currentIndex.value) {
+                _currentIndex.value--
+            }
         }
     }
 
     fun finishAllSessions() {
-        val active = _sessions.value
-        _sessions.value = emptyList()
-        _currentIndex.value = -1
-        sessionDistros.clear()
-        sessionClients.clear()
-        active.forEach { it.finishIfRunning() }
+        synchronized(this) {
+            val active = _sessions.value
+            _sessions.value = emptyList()
+            _currentIndex.value = -1
+            sessionDistros.clear()
+            sessionClients.clear()
+            active.forEach { it.finishIfRunning() }
+        }
     }
 
     fun switchToSession(index: Int) {
-        if (index in _sessions.value.indices) {
-            _currentIndex.value = index
+        synchronized(this) {
+            if (index in _sessions.value.indices) {
+                _currentIndex.value = index
+            }
         }
     }
 
-    fun removeSessionsForDistro(distroName: String) {
-        val current = _sessions.value
-        val removed = mutableListOf<TerminalSession>()
-        var removedBeforeCurrent = 0
-        val kept = current.filterIndexed { i, s ->
-            if (sessionDistros[s].equals(distroName, ignoreCase = true)) {
-                removed.add(s)
-                if (i < _currentIndex.value) removedBeforeCurrent++
-                false
-            } else {
-                true
+    fun switchToSession(session: TerminalSession): Boolean {
+        synchronized(this) {
+            val idx = _sessions.value.indexOf(session)
+            if (idx >= 0) {
+                _currentIndex.value = idx
+                return true
             }
         }
-        _sessions.value = kept
-        removed.forEach { sessionDistros.remove(it) }
-        removed.forEach { sessionClients.remove(it) }
-        removed.forEach { it.finishIfRunning() }
-        _currentIndex.value = if (kept.isEmpty()) {
-            -1
-        } else {
-            (_currentIndex.value - removedBeforeCurrent).coerceIn(0, kept.size - 1)
+        return false
+    }
+
+    fun removeSessionsForDistro(distroName: String) {
+        synchronized(this) {
+            val current = _sessions.value
+            val removed = mutableListOf<TerminalSession>()
+            var removedBeforeCurrent = 0
+            val kept = current.filterIndexed { i, s ->
+                if (sessionDistros[s].equals(distroName, ignoreCase = true)) {
+                    removed.add(s)
+                    if (i < _currentIndex.value) removedBeforeCurrent++
+                    false
+                } else {
+                    true
+                }
+            }
+            _sessions.value = kept
+            removed.forEach { sessionDistros.remove(it) }
+            removed.forEach { sessionClients.remove(it) }
+            removed.forEach { it.finishIfRunning() }
+            _currentIndex.value = if (kept.isEmpty()) {
+                -1
+            } else {
+                (_currentIndex.value - removedBeforeCurrent).coerceIn(0, kept.size - 1)
+            }
         }
     }
 }

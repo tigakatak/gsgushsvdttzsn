@@ -160,6 +160,7 @@ class TerminalService : Service() {
                     launchScripts[session] = spec.launchScript
                 }
                 sessionStore.addSession(session, distroName, bridge)
+                sessionStore.switchToSession(session)
                 updateNotification()
                 RedTermWidgetProvider.updateAll(this@TerminalService)
             } catch (e: Exception) {

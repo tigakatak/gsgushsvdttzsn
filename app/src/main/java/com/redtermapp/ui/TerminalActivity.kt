@@ -200,7 +200,7 @@ class TerminalActivity : AppCompatActivity() {
             terminalView.setBackgroundColor(terminalBgWithAlpha())
             val target = sessionStore.indexOfSessionForDistro(distroName)
             if (target >= 0) {
-                sessionStore.switchToSession(target)
+                sessionStore.switchToSession(sessions[target])
                 terminalView.attachSession(sessions[target])
                 terminalView.onScreenUpdated()
                 terminalView.post {
@@ -494,8 +494,9 @@ class TerminalActivity : AppCompatActivity() {
 
     private fun switchToSession(index: Int) {
         if (index !in sessions.indices || index == currentIndex) return
-        sessionStore.switchToSession(index)
-        terminalView.attachSession(sessions[index])
+        val session = sessions[index]
+        sessionStore.switchToSession(session)
+        terminalView.attachSession(session)
         terminalView.onScreenUpdated()
         updateDrawer()
     }
@@ -730,7 +731,7 @@ class TerminalActivity : AppCompatActivity() {
 
         val target = sessionStore.indexOfSessionForDistro(newDistro)
         if (target >= 0) {
-            sessionStore.switchToSession(target)
+            sessionStore.switchToSession(sessions[target])
             terminalView.attachSession(sessions[target])
             terminalView.onScreenUpdated()
             terminalView.requestFocus()
