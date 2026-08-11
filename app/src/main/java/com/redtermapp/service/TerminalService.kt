@@ -89,6 +89,9 @@ class TerminalService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action != ACTION_EXIT) {
+            startForeground(RedTermApp.NOTIF_ID_TERMINAL, buildNotification())
+        }
         when (intent?.action) {
             ACTION_ACQUIRE -> {
                 userWakelockHeld = true
