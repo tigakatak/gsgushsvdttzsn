@@ -31,8 +31,8 @@ internal class TerminalSessionClientBridge(
     }
 
     override fun onSessionFinished(session: TerminalSession) {
-        onFinished(session)
         delegate?.onSessionFinished(session)
+        onFinished(session)
         delegate = null
     }
 
