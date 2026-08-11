@@ -76,7 +76,7 @@ class TerminalActivity : AppCompatActivity() {
     private val nightReceiver = makeNightModeReceiver(this)
 
     private fun wireBackend(backend: TerminalBackend) {
-        backend.onSessionFinished = { handleSessionFinished() }
+        backend.onSessionFinished = { finishedSession -> handleSessionFinished(finishedSession) }
         backend.onLinkTap = { link, isPath -> handleLinkTap(link, isPath) }
         backend.onModifierConsumed = { consumeModifiers() }
         backend.onEmulatorReady = { applyEmulatorColors(backend.view) }
@@ -500,13 +500,15 @@ class TerminalActivity : AppCompatActivity() {
         terminalView.onScreenUpdated()
         updateDrawer()
     }
-    private fun handleSessionFinished() {
+    private fun handleSessionFinished(finishedSession: TerminalSession) {
         if (sessions.isEmpty()) {
             finish()
         } else {
-            val safeIdx = currentIndex.coerceIn(0, sessions.lastIndex)
-            terminalView.attachSession(sessions[safeIdx])
-            terminalView.onScreenUpdated()
+            if (terminalView.mTermSession === finishedSession) {
+                val safeIdx = currentIndex.coerceIn(0, sessions.lastIndex)
+                terminalView.attachSession(sessions[safeIdx])
+                terminalView.onScreenUpdated()
+            }
             updateDrawer()
         }
         RedTermWidgetProvider.updateAll(this)

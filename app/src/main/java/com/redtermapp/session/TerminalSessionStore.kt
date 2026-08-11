@@ -54,7 +54,7 @@ internal class TerminalSessionStore {
             val removed = current[index]
             _sessions.value = current.toMutableList().apply { removeAt(index) }
             sessionDistros.remove(removed)
-            sessionClients.remove(removed)
+            sessionClients.remove(removed)?.detachAll()
             removed.finishIfRunning()
             if (_currentIndex.value >= _sessions.value.size) {
                 _currentIndex.value = _sessions.value.size - 1
@@ -71,7 +71,7 @@ internal class TerminalSessionStore {
             val current = _sessions.value
             _sessions.value = current.toMutableList().apply { removeAt(index) }
             sessionDistros.remove(session)
-            sessionClients.remove(session)
+            sessionClients.remove(session)?.detachAll()
             if (_currentIndex.value >= _sessions.value.size) {
                 _currentIndex.value = _sessions.value.size - 1
             } else if (index < _currentIndex.value) {
@@ -126,7 +126,7 @@ internal class TerminalSessionStore {
             }
             _sessions.value = kept
             removed.forEach { sessionDistros.remove(it) }
-            removed.forEach { sessionClients.remove(it) }
+            removed.forEach { sessionClients.remove(it)?.detachAll() }
             removed.forEach { it.finishIfRunning() }
             _currentIndex.value = if (kept.isEmpty()) {
                 -1

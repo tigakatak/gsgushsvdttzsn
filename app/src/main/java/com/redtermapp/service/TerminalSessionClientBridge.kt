@@ -18,6 +18,10 @@ internal class TerminalSessionClientBridge(
         if (delegate === client) delegate = null
     }
 
+    fun detachAll() {
+        delegate = null
+    }
+
     override fun onTextChanged(session: TerminalSession) {
         delegate?.onTextChanged(session)
     }
