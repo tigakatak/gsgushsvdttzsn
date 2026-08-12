@@ -12,6 +12,7 @@ import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.redtermapp.R
 import com.redtermapp.RedTermApp
+import com.redtermapp.proot.ProotInstaller
 import com.redtermapp.ui.AppTheme
 import com.redtermapp.ui.Prefs
 import com.redtermapp.ui.TerminalActivity
@@ -142,6 +143,14 @@ class TerminalService : Service() {
     }
 
     private fun createSession(distroName: String) {
+        if (!ProotInstaller.isInstalled(applicationContext)) {
+            Toast.makeText(
+                this,
+                "proot binary not found. Please reinstall RedTerm.",
+                Toast.LENGTH_LONG,
+            ).show()
+            return
+        }
         if (!pendingDistros.add(distroName)) return
         serviceScope.launch {
             var launchScript: File? = null

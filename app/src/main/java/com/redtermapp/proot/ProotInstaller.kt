@@ -10,24 +10,7 @@ object ProotInstaller {
     private const val TAG = "ProotInstaller"
     private const val PROOT_BIN = "proot"
 
-    private fun getAbi(): String {
-        // RedTerm ships an arm64-v8a-only APK; pick the 64-bit ABI when available.
-        val abis = android.os.Build.SUPPORTED_64_BIT_ABIS
-        if (abis.isNotEmpty()) {
-            return when (abis[0]) {
-                "arm64-v8a" -> "arm64-v8a"
-                "x86_64" -> "x86_64"
-                else -> abis[0]
-            }
-        }
-        return "arm64-v8a"
-    }
-
-    private fun zipEntryPath(): String {
-        val abi = getAbi()
-        // NDK stores libs under lib/<abi>/lib*.so inside the APK
-        return "lib/$abi/libproot.so"
-    }
+    private fun zipEntryPath(): String = "lib/arm64-v8a/libproot.so"
 
     fun getProotPath(context: Context): String? {
         // 1. nativeLibraryDir (system-extracted jniLibs)

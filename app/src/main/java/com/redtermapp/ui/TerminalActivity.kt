@@ -75,7 +75,7 @@ class TerminalActivity : AppCompatActivity() {
     private val sessions: List<TerminalSession> get() = sessionStore.sessions.value
     private val currentIndex: Int get() = sessionStore.currentIndex.value
 
-    private val nightReceiver = makeNightModeReceiver(this)
+    private var lastAppliedTheme: String? = null
 
     private val requestNotificationPermission =
         registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
@@ -129,7 +129,7 @@ class TerminalActivity : AppCompatActivity() {
         setContentView(R.layout.activity_terminal)
         setupImeVisibilityListener()
 
-        if (!com.redtermapp.util.StoragePermission.isAccessible(this)) {
+        if (!com.redtermapp.util.StoragePermission.isAccessible()) {
             Toast.makeText(
                 this,
                 "RedTerm needs All files access to use /storage/emulated/0 in the terminal",
@@ -198,7 +198,6 @@ class TerminalActivity : AppCompatActivity() {
             requestNewSession(distroName)
         }
 
-        registerNightModeReceiver(nightReceiver)
         observeSessions()
         if (sessions.isEmpty()) {
             requestNewSession(distroName)
@@ -362,20 +361,20 @@ class TerminalActivity : AppCompatActivity() {
             "TAB" to { session?.writeCodePoint(false, 9); Unit },
             "CTRL" to { toggleCtrl() },
             "ALT" to { toggleAlt() },
-            "\u25B2" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_UP, 0); Unit },
-            "UP" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_UP, 0); Unit },
-            "\u25BC" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_DOWN, 0); Unit },
-            "DOWN" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_DOWN, 0); Unit },
-            "\u25C0" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_LEFT, 0); Unit },
-            "LEFT" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_LEFT, 0); Unit },
-            "\u25B6" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_RIGHT, 0); Unit },
-            "RIGHT" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_RIGHT, 0); Unit },
-            "HOME" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_MOVE_HOME, 0); Unit },
-            "END" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_MOVE_END, 0); Unit },
-            "INS" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_INSERT, 0); Unit },
-            "DEL" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_FORWARD_DEL, 0); Unit },
-            "\u232B" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DEL, 0); Unit },
-            "BACKSPACE" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DEL, 0); Unit },
+            "\u25B2" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_UP, currentKeyMod()); Unit },
+            "UP" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_UP, currentKeyMod()); Unit },
+            "\u25BC" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_DOWN, currentKeyMod()); Unit },
+            "DOWN" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_DOWN, currentKeyMod()); Unit },
+            "\u25C0" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_LEFT, currentKeyMod()); Unit },
+            "LEFT" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_LEFT, currentKeyMod()); Unit },
+            "\u25B6" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_RIGHT, currentKeyMod()); Unit },
+            "RIGHT" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_RIGHT, currentKeyMod()); Unit },
+            "HOME" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_MOVE_HOME, currentKeyMod()); Unit },
+            "END" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_MOVE_END, currentKeyMod()); Unit },
+            "INS" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_INSERT, currentKeyMod()); Unit },
+            "DEL" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_FORWARD_DEL, currentKeyMod()); Unit },
+            "\u232B" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DEL, currentKeyMod()); Unit },
+            "BACKSPACE" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DEL, currentKeyMod()); Unit },
             "\u2014" to { session?.write("-"); Unit },
         )
         val action = actions.firstOrNull { it.first == label }?.second
@@ -390,6 +389,13 @@ class TerminalActivity : AppCompatActivity() {
                 consumeModifiers()
             }
         }
+    }
+
+    private fun currentKeyMod(): Int {
+        var mod = 0
+        if (ctrlActive) mod |= com.termux.terminal.KeyHandler.KEYMOD_CTRL
+        if (altActive) mod |= com.termux.terminal.KeyHandler.KEYMOD_ALT
+        return mod
     }
 
     private fun setupExtraKeysRow1() {
@@ -483,11 +489,7 @@ class TerminalActivity : AppCompatActivity() {
 
     internal fun sendInputLine(text: String) {
         val s = session ?: return
-        if (text.isEmpty()) {
-            s.write("\r")
-        } else {
-            s.write(text)
-        }
+        s.write(if (text.isEmpty()) "\r" else text + "\r")
     }
 
     private val session: TerminalSession?
@@ -704,8 +706,7 @@ class TerminalActivity : AppCompatActivity() {
 
         terminalView.setTextSize(14)
         terminalView.setBackgroundColor(terminalBgWithAlpha())
-        val backend = TerminalBackend(terminalView, this)
-        terminalView.setTerminalViewClient(backend)
+        val backend = ensureTerminalBackend()
         backend.onEmulatorReady = { applyEmulatorColors(terminalView) }
         val s = TerminalSession(
             "/system/bin/toybox", filesDir.absolutePath,
@@ -728,8 +729,14 @@ class TerminalActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        val currentTheme = prefs().getString(Prefs.KEY_THEME, "amoled")
+        if (lastAppliedTheme != null && lastAppliedTheme != currentTheme) {
+            recreate()
+            return
+        }
+        lastAppliedTheme = currentTheme
         sendServiceAction(TerminalService.ACTION_AUTO_RELEASE)
-        if (!com.redtermapp.util.StoragePermission.isAccessible(this)) {
+        if (!com.redtermapp.util.StoragePermission.isAccessible()) {
             val prefs = prefs()
             val lastAsk = prefs.getLong("storage_ask_time", 0L)
             if (System.currentTimeMillis() - lastAsk > Prefs.PERMISSION_ASK_THROTTLE_MS) {
@@ -779,7 +786,6 @@ class TerminalActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         RedTermWidgetProvider.updateAll(this)
-        try { unregisterReceiver(nightReceiver) } catch (_: IllegalArgumentException) {}
         terminalBackend?.let {
             sessionStore.detachClient(it)
             it.onSessionFinished = null
@@ -802,6 +808,7 @@ class TerminalActivity : AppCompatActivity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (currentFocus is android.widget.EditText) return super.dispatchKeyEvent(event)
         if (currentIndex !in sessions.indices) return super.dispatchKeyEvent(event)
         val hadModifier = ctrlActive || altActive
         @Suppress("DEPRECATION")
@@ -900,7 +907,8 @@ class TerminalActivity : AppCompatActivity() {
     private fun applyTerminalTheme(themeName: String) {
         val prefs = prefs()
         prefs.edit().putString("theme", themeName).apply()
-        NightModeReceiver.notifyChanged(this, prefs)
+        lastAppliedTheme = themeName
+        applyTheme()
         applyTerminalColors()
     }
 
@@ -1018,7 +1026,7 @@ class TerminalActivity : AppCompatActivity() {
     private fun applyTheme() {
         AppTheme.apply(this)
         val prefs = prefs()
-        if (NightModeReceiver.effectiveTheme(prefs) == "dynamic" && android.os.Build.VERSION.SDK_INT >= 31) {
+        if (prefs.getString(Prefs.KEY_THEME, "amoled") == "dynamic" && android.os.Build.VERSION.SDK_INT >= 31) {
             try {
                 com.google.android.material.color.DynamicColors.applyToActivityIfAvailable(this)
             } catch (_: Exception) {}

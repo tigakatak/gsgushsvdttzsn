@@ -5,21 +5,9 @@ data class Distro(
     val displayName: String,
     val description: String,
     val baseUrl: String,
-    val sha256: Map<String, String>,
-    val prootArchs: List<String>,
+    val sha256: String,
     val packageManager: String,
-    val archOverride: Map<String, String> = emptyMap()
+    val urlArch: String = "aarch64"
 ) {
-    fun tarballUrlFor(deviceArch: String): String {
-        val arch = abiToProotArch(deviceArch)
-        val urlArch = archOverride[arch] ?: arch
-        return baseUrl.replace("{arch}", urlArch)
-    }
-
-    fun sha256For(deviceArch: String): String {
-        val arch = abiToProotArch(deviceArch)
-        return sha256[arch] ?: ""
-    }
+    fun tarballUrl(): String = baseUrl.replace("{arch}", urlArch)
 }
-
-fun abiToProotArch(abi: String): String = "aarch64"

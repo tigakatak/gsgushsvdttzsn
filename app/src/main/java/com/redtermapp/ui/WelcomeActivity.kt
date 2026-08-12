@@ -87,24 +87,10 @@ class WelcomeActivity : AppCompatActivity() {
             }
         }
 
-        val abi = android.os.Build.SUPPORTED_64_BIT_ABIS.firstOrNull() ?: "arm64-v8a"
-
-        installer.setDeviceAbi(abi)
-
-        val available = DistroRegistry.forDevice(abi)
-        if (available.isEmpty()) {
-            distroList.addView(TextView(this).apply {
-                text = "No distributions available for your device architecture ($abi)"
-                setTextColor(0xFFFF6B6B.toInt())
-                textSize = 14f
-                setPadding(16, 16, 16, 16)
-            })
-        } else {
-            for (distro in available) {
-                val card = createDistroCard(distro)
-                distroCardMap[distro.name] = card
-                distroList.addView(card)
-            }
+        for (distro in DistroRegistry.allDistros) {
+            val card = createDistroCard(distro)
+            distroCardMap[distro.name] = card
+            distroList.addView(card)
         }
         refreshDistroStates()
 

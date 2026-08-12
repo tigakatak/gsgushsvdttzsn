@@ -8,7 +8,6 @@ import com.termux.terminal.TerminalSessionClient
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 import java.util.IdentityHashMap
 
 internal class TerminalSessionStore {
@@ -87,6 +86,7 @@ internal class TerminalSessionStore {
             _sessions.value = emptyList()
             _currentIndex.value = -1
             sessionDistros.clear()
+            sessionClients.values.forEach { it.detachAll() }
             sessionClients.clear()
             active.forEach { it.finishIfRunning() }
         }

@@ -148,6 +148,11 @@ public class TextSelectionCursorController implements CursorController {
 
             @Override
             public void onDestroyActionMode(ActionMode mode) {
+                mActionMode = null;
+                mStartHandle.hide();
+                mEndHandle.hide();
+                mSelX1 = mSelY1 = mSelX2 = mSelY2 = -1;
+                mIsSelectingText = false;
             }
 
             @Override
@@ -298,10 +303,6 @@ public class TextSelectionCursorController implements CursorController {
     public void decrementYTextSelectionCursors(int decrement) {
         mSelY1 -= decrement;
         mSelY2 -= decrement;
-    }
-
-    public boolean onTouchEvent(MotionEvent event) {
-        return false;
     }
 
     public void onTouchModeChanged(boolean isInTouchMode) {

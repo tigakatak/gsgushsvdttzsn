@@ -1,7 +1,6 @@
 package com.redtermapp.distro
 
 import android.content.Context
-import android.os.Build
 import android.provider.DocumentsContract
 import android.util.Log
 import com.redtermapp.ui.Prefs
@@ -25,12 +24,6 @@ class DistroInstaller(private val context: Context) {
     @Volatile
     var cancelled = false
 
-    private var deviceAbi: String = "aarch64"
-
-    fun setDeviceAbi(abi: String) {
-        deviceAbi = abi
-    }
-
     fun cancel() {
         cancelled = true
     }
@@ -49,13 +42,13 @@ class DistroInstaller(private val context: Context) {
 
             val tarball = File(tarballDir(), "${distro.name}.tar.xz")
             if (tarball.exists()) tarball.delete()
-            val tarballUrl = distro.tarballUrlFor(deviceAbi)
+            val tarballUrl = distro.tarballUrl()
             Log.i("DistroInstaller", "Downloading $tarballUrl")
 
             downloadTarball(tarballUrl, tarball, onProgress)
             checkCancel()
 
-            val expectedSha = distro.sha256For(deviceAbi)
+            val expectedSha = distro.sha256
             if (expectedSha.isNotEmpty()) {
                 verifyChecksum(tarball, expectedSha)
             }
@@ -343,12 +336,10 @@ class DistroInstaller(private val context: Context) {
 
     private fun killProcess(process: Process) {
         process.destroy()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            try {
-                process.destroyForcibly().waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
-            } catch (_: Exception) {
-                // best-effort; the SIGTERM from destroy() is still in flight
-            }
+        try {
+            process.destroyForcibly().waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
+        } catch (_: Exception) {
+            // best-effort; the SIGTERM from destroy() is still in flight
         }
     }
 

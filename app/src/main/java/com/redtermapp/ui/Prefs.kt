@@ -3,8 +3,6 @@ package com.redtermapp.ui
 import android.content.Context
 import android.content.SharedPreferences
 import android.widget.SeekBar
-import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
 
 object Prefs {
     const val NAME = "settings"
@@ -15,7 +13,6 @@ object Prefs {
     const val KEY_TERMINAL_OPACITY = "terminal_opacity"
     const val KEY_AUTOHIDE_KEYS = "autohide_keys"
     const val KEY_WAKELOCK = "wakelock"
-    const val KEY_AUTO_NIGHT = "auto_night"
     const val KEY_LOCK_ENABLED = "lock_enabled"
     const val KEY_LOCK_PIN = "lock_pin"
     const val KEY_LAST_DISTRO = "last_distro"
@@ -78,21 +75,6 @@ fun fontDisplayName(fileName: String): String =
     fileName.removeSuffix(".ttf").removeSuffix(".TTF").removeSuffix(".otf").removeSuffix(".OTF")
 
 fun String.capitalized(): String = replaceFirstChar { it.uppercase() }
-
-fun AppCompatActivity.registerNightModeReceiver(receiver: android.content.BroadcastReceiver) {
-    ContextCompat.registerReceiver(
-        this, receiver,
-        android.content.IntentFilter(NightModeReceiver.ACTION_CHANGED),
-        ContextCompat.RECEIVER_NOT_EXPORTED
-    )
-}
-
-fun makeNightModeReceiver(activity: AppCompatActivity): android.content.BroadcastReceiver =
-    object : android.content.BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: android.content.Intent?) {
-            activity.recreate()
-        }
-    }
 
 fun simpleSeekBarListener(onProgress: (Int) -> Unit): SeekBar.OnSeekBarChangeListener =
     object : SeekBar.OnSeekBarChangeListener {

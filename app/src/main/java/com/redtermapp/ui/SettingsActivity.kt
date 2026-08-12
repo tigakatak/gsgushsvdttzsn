@@ -37,14 +37,10 @@ class SettingsActivity : AppCompatActivity() {
         private const val RESTORE_TIMEOUT_SECONDS = 600L
     }
 
-    private val nightReceiver = makeNightModeReceiver(this)
-
     override fun onCreate(savedInstanceState: Bundle?) {
         AppTheme.apply(this)
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings)
-
-        registerNightModeReceiver(nightReceiver)
 
         val prefs = prefs()
 
@@ -68,7 +64,6 @@ class SettingsActivity : AppCompatActivity() {
                     prefs.edit().putString("theme", themeValues[pos]).apply()
                     findViewById<TextView>(R.id.customize_theme_btn).visibility =
                         if (themeValues[pos] == "custom") android.view.View.VISIBLE else android.view.View.GONE
-                    NightModeReceiver.notifyChanged(this@SettingsActivity, prefs)
                     recreate()
                 }
             }
@@ -122,18 +117,6 @@ class SettingsActivity : AppCompatActivity() {
 
         fontSlider.progress = prefs.getInt(Prefs.KEY_FONT_SIZE, Prefs.FONT_SIZE_DEFAULT)
         wakelockSwitch.isChecked = prefs.getBoolean(Prefs.KEY_WAKELOCK, Prefs.WAKELOCK_DEFAULT)
-
-        val nightSwitch = findViewById<Switch>(R.id.night_mode_switch)
-        nightSwitch.isChecked = prefs.getBoolean("auto_night", false)
-        nightSwitch.setOnCheckedChangeListener { _, isChecked ->
-            prefs.edit().putBoolean("auto_night", isChecked).apply()
-            if (isChecked) {
-                NightModeReceiver.scheduleNightMode(this, prefs)
-            } else {
-                NightModeReceiver.cancelNightMode(this)
-            }
-            NightModeReceiver.notifyChanged(this, prefs)
-        }
 
         fontSlider.setOnSeekBarChangeListener(simpleSeekBarListener { progress ->
             prefs.edit().putInt(Prefs.KEY_FONT_SIZE, progress).apply()
@@ -226,7 +209,6 @@ class SettingsActivity : AppCompatActivity() {
                     put("terminal_opacity", prefs.getInt("terminal_opacity", 10))
                     put("autohide_keys", prefs.getBoolean("autohide_keys", false))
                     put("wakelock", prefs.getBoolean(Prefs.KEY_WAKELOCK, Prefs.WAKELOCK_DEFAULT))
-                    put("auto_night", prefs.getBoolean("auto_night", false))
                 }
                 val fileName = "RedTerm_config.json"
                 val file = java.io.File(getExternalFilesDir(null), fileName)
@@ -260,9 +242,7 @@ class SettingsActivity : AppCompatActivity() {
                 edit.putInt("terminal_opacity", json.optInt("terminal_opacity", 10))
                 edit.putBoolean("autohide_keys", json.optBoolean("autohide_keys", false))
                 edit.putBoolean("wakelock", json.optBoolean("wakelock", Prefs.WAKELOCK_DEFAULT))
-                edit.putBoolean("auto_night", json.optBoolean("auto_night", false))
                 edit.apply()
-                NightModeReceiver.notifyChanged(this, prefs)
                 Toast.makeText(this, "Config imported from ${file.name}", Toast.LENGTH_LONG).show()
                 recreate()
             } catch (e: Exception) {
@@ -271,7 +251,7 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         findViewById<TextView>(R.id.backup_btn).setOnClickListener {
-            if (!com.redtermapp.util.StoragePermission.isAccessible(this)) {
+            if (!com.redtermapp.util.StoragePermission.isAccessible()) {
                 Toast.makeText(this, "Grant All files access to use /sdcard/RedTerm", Toast.LENGTH_LONG).show()
                 com.redtermapp.util.StoragePermission.requestAccess(this)
                 return@setOnClickListener
@@ -322,7 +302,7 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         findViewById<TextView>(R.id.restore_btn).setOnClickListener {
-            if (!com.redtermapp.util.StoragePermission.isAccessible(this)) {
+            if (!com.redtermapp.util.StoragePermission.isAccessible()) {
                 Toast.makeText(this, "Grant All files access to use /sdcard/RedTerm", Toast.LENGTH_LONG).show()
                 com.redtermapp.util.StoragePermission.requestAccess(this)
                 return@setOnClickListener
@@ -838,8 +818,4 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
-    override fun onDestroy() {
-        unregisterReceiver(nightReceiver)
-        super.onDestroy()
-    }
 }

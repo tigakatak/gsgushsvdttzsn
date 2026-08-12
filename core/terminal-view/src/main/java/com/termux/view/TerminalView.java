@@ -228,6 +228,7 @@ public final class TerminalView extends View {
      */
     public boolean attachSession(TerminalSession session) {
         if (session == mTermSession) return false;
+        stopTextSelectionMode();
         mTopRow = 0;
 
         mTermSession = session;
@@ -555,14 +556,16 @@ public final class TerminalView extends View {
                 if (action == MotionEvent.ACTION_DOWN) showContextMenu();
                 return true;
             } else if (event.isButtonPressed(MotionEvent.BUTTON_TERTIARY)) {
-                ClipboardManager clipboardManager = (ClipboardManager) getContext().getSystemService(Context.CLIPBOARD_SERVICE);
-                if (clipboardManager != null) {
-                    ClipData clipData = clipboardManager.getPrimaryClip();
-                    if (clipData != null) {
-                        ClipData.Item clipItem = clipData.getItemAt(0);
-                        if (clipItem != null) {
-                            CharSequence text = clipItem.coerceToText(getContext());
-                            if (!TextUtils.isEmpty(text)) mEmulator.paste(text.toString());
+                if (action == MotionEvent.ACTION_DOWN) {
+                    ClipboardManager clipboardManager = (ClipboardManager) getContext().getSystemService(Context.CLIPBOARD_SERVICE);
+                    if (clipboardManager != null) {
+                        ClipData clipData = clipboardManager.getPrimaryClip();
+                        if (clipData != null) {
+                            ClipData.Item clipItem = clipData.getItemAt(0);
+                            if (clipItem != null) {
+                                CharSequence text = clipItem.coerceToText(getContext());
+                                if (!TextUtils.isEmpty(text)) mEmulator.paste(text.toString());
+                            }
                         }
                     }
                 }

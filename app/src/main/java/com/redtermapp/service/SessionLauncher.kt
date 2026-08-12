@@ -63,8 +63,13 @@ ${loader32Export}export PROOT_TMP_DIR=$rootfsPath/tmp
 mkdir -p "$rootfsPath/tmp" "$rootfsPath/dev/shm" "$rootfsPath/run/shm"
 ulimit -n ${Prefs.ULIMIT_NOFILE} 2>/dev/null
 ulimit -u ${Prefs.ULIMIT_NPROC} 2>/dev/null
-exec $prootBin -0 -L -r "$rootfsPath" -w /root --link2symlink --sysvipc --ashmem-memfd --kill-on-exit \
-    -b /dev -b /proc -b /sys -b /system -b /apex -b /linkerconfig/ld.config.txt \
+exec "$prootBin" -0 -L -r "$rootfsPath" -w /root --link2symlink --sysvipc --ashmem-memfd --kill-on-exit \
+    -b /dev -b /proc \
+    -b /proc/self/fd:/dev/fd \
+    -b /proc/self/fd/0:/dev/stdin \
+    -b /proc/self/fd/1:/dev/stdout \
+    -b /proc/self/fd/2:/dev/stderr \
+    -b /sys -b /system -b /apex -b /linkerconfig/ld.config.txt \
     -b /sdcard -b /storage -b /mnt \
     -b /dev/urandom:/dev/random \
     /bin/sh -i

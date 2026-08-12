@@ -24,14 +24,14 @@ object AppTheme {
     }
 
     fun resolveThemeColor(context: Context, prefs: SharedPreferences, attr: Int, default: Int): Int {
-        val name = NightModeReceiver.effectiveTheme(prefs)
+        val name = prefs.getString(Prefs.KEY_THEME, "amoled") ?: "amoled"
         val res = themeRes(name)
         return ContextThemeWrapper(context, res).themeColor(attr, default)
     }
 
     fun apply(activity: ComponentActivity) {
         val prefs = activity.prefs()
-        val name = NightModeReceiver.effectiveTheme(prefs)
+        val name = prefs.getString(Prefs.KEY_THEME, "amoled") ?: "amoled"
         val res = themeRes(name)
         activity.setTheme(res)
         val wrapped = ContextThemeWrapper(activity, res)

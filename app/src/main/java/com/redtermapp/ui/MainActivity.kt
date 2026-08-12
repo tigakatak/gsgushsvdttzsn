@@ -21,14 +21,12 @@ class MainActivity : AppCompatActivity() {
 
     private val installer by lazy { DistroInstaller(applicationContext) }
 
-    private val nightReceiver = makeNightModeReceiver(this)
+    private var lastAppliedTheme: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         AppTheme.apply(this)
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-
-        registerNightModeReceiver(nightReceiver)
 
         populateDistroList()
 
@@ -141,27 +139,14 @@ class MainActivity : AppCompatActivity() {
             putExtra(TerminalActivity.EXTRA_DISTRO, name)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
-        if (android.os.Build.VERSION.SDK_INT >= 26) {
-            val info = androidx.core.content.pm.ShortcutInfoCompat.Builder(this, "launch_$name")
-                .setShortLabel(name.capitalized())
-                .setLongLabel("Open $name in RedTerm")
-                .setIcon(androidx.core.graphics.drawable.IconCompat.createWithResource(this, R.mipmap.ic_launcher))
-                .setIntent(intent)
-                .build()
-            androidx.core.content.pm.ShortcutManagerCompat.requestPinShortcut(this, info, null)
-            Toast.makeText(this, "Pin the shortcut from the system dialog", Toast.LENGTH_LONG).show()
-        } else {
-            val addIntent = Intent("com.android.launcher.action.INSTALL_SHORTCUT").apply {
-                putExtra(Intent.EXTRA_SHORTCUT_INTENT, intent)
-                putExtra(Intent.EXTRA_SHORTCUT_NAME, name.capitalized())
-                putExtra(
-                    Intent.EXTRA_SHORTCUT_ICON_RESOURCE,
-                    Intent.ShortcutIconResource.fromContext(this@MainActivity, R.mipmap.ic_launcher)
-                )
-            }
-            sendBroadcast(addIntent)
-            Toast.makeText(this, "Shortcut added to home screen", Toast.LENGTH_LONG).show()
-        }
+        val info = androidx.core.content.pm.ShortcutInfoCompat.Builder(this, "launch_$name")
+            .setShortLabel(name.capitalized())
+            .setLongLabel("Open $name in RedTerm")
+            .setIcon(androidx.core.graphics.drawable.IconCompat.createWithResource(this, R.mipmap.ic_launcher))
+            .setIntent(intent)
+            .build()
+        androidx.core.content.pm.ShortcutManagerCompat.requestPinShortcut(this, info, null)
+        Toast.makeText(this, "Pin the shortcut from the system dialog", Toast.LENGTH_LONG).show()
     }
 
     private fun resetDistro(name: String) {
@@ -228,11 +213,12 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        val current = prefs().getString(Prefs.KEY_THEME, "amoled")
+        if (lastAppliedTheme != null && lastAppliedTheme != current) {
+            recreate()
+            return
+        }
+        lastAppliedTheme = current
         populateDistroList()
-    }
-
-    override fun onDestroy() {
-        unregisterReceiver(nightReceiver)
-        super.onDestroy()
     }
 }
