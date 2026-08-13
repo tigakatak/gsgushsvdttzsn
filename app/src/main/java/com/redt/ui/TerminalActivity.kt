@@ -392,8 +392,8 @@ class TerminalActivity : AppCompatActivity() {
 
     private fun currentKeyMod(): Int {
         var mod = 0
-        if (ctrlActive) mod |= com.termux.terminal.KeyHandler.KEYMOD_CTRL
-        if (altActive) mod |= com.termux.terminal.KeyHandler.KEYMOD_ALT
+        if (ctrlActive) mod = mod or com.termux.terminal.KeyHandler.KEYMOD_CTRL
+        if (altActive) mod = mod or com.termux.terminal.KeyHandler.KEYMOD_ALT
         return mod
     }
 
