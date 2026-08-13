@@ -151,7 +151,7 @@ export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 shopt -s checkwinsize histappend
 HISTSIZE=1000
 HISTFILESIZE=2000
-PS1='\[\e[1;32m\]\u@red\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]\$ '
+PS1='\[\e[1;32m\]\u@RedT\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]\$ '
 alias ls='ls --color=auto'
 alias ll='ls -lah --color=auto'
 alias la='ls -A --color=auto'
