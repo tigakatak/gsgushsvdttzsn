@@ -1,6 +1,6 @@
-# Contributing to RedTerm
+# Contributing to RedT
 
-Thanks for considering contributing to RedTerm. This document covers how to build the project, run it, and get your changes merged.
+Thanks for considering contributing to RedT. This document covers how to build the project, run it, and get your changes merged.
 
 ## Table of contents
 
@@ -52,11 +52,11 @@ Install the debug APK, launch the app and follow the first-time setup:
 
 ## Project layout
 
-- `app/src/main/java/com/redtermapp/ui/` - activities and terminal UI
-- `app/src/main/java/com/redtermapp/distro/` - distro registry and installation
-- `app/src/main/java/com/redtermapp/proot/` - proot binary handling and launch
-- `app/src/main/java/com/redtermapp/service/` - foreground service
-- `app/src/main/java/com/redtermapp/util/` - helpers (app lock, etc.)
+- `app/src/main/java/com/redt/ui/` - activities and terminal UI
+- `app/src/main/java/com/redt/distro/` - distro registry and installation
+- `app/src/main/java/com/redt/proot/` - proot binary handling and launch
+- `app/src/main/java/com/redt/service/` - foreground service
+- `app/src/main/java/com/redt/util/` - helpers (app lock, etc.)
 - `app/src/main/assets/bashrc/` - built-in `.bashrc` templates
 - `app/src/main/assets/fonts/` - bundled monospace fonts
 - `native/` - proot build scripts

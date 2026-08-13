@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a problem with RedTerm
+description: Report a problem with RedT
 labels: [bug]
 body:
   - type: markdown
@@ -9,7 +9,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: RedTerm version
+      label: RedT version
       description: Version shown at the bottom of Settings (e.g. v1.0.2) or the APK file name
       placeholder: v1.0.2
     validations:

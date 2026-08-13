@@ -1,7 +1,7 @@
-# RedTerm
+# RedT
 
-[![Download latest APK](https://img.shields.io/badge/Download-Latest%20APK-brightgreen?style=for-the-badge&logo=github)](https://github.com/GlobalTechInfo/RedTerm/releases/latest)
-[![CI](https://img.shields.io/badge/CI-GitHub%20Actions-blue?style=for-the-badge&logo=githubactions&logoColor=white)](https://github.com/GlobalTechInfo/RedTerm/actions)
+[![Download latest APK](https://img.shields.io/badge/Download-Latest%20APK-brightgreen?style=for-the-badge&logo=github)](https://github.com/GlobalTechInfo/RedT/releases/latest)
+[![CI](https://img.shields.io/badge/CI-GitHub%20Actions-blue?style=for-the-badge&logo=githubactions&logoColor=white)](https://github.com/GlobalTechInfo/RedT/actions)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue?style=for-the-badge)](LICENSE)
 [![Platform: Android 7.0+](https://img.shields.io/badge/Platform-Android%207.0%2B-green?style=for-the-badge&logo=android&logoColor=white)](https://developer.android.com/studio)
 
@@ -77,7 +77,7 @@ Pre-built binaries for `arm64-v8a` are included in the repo (ARM64-only).
 | Artix  | Working | pacman | Same as Arch |
 | Manjaro | Working | pacman | `pacman -Syy` + `pacman -S nano wget sudo bash openssl` |
 
-> **Arch note:** Arch's rootfs tarball ships with an older glibc than the current repositories. On first boot, RedTerm force-refreshes the package databases (`pacman -Syy`) and upgrades `glibc` + `gcc-libs` so current packages (npm, nodejs, etc.) can run — without downloading a full system upgrade.
+> **Arch note:** Arch's rootfs tarball ships with an older glibc than the current repositories. On first boot, RedT force-refreshes the package databases (`pacman -Syy`) and upgrades `glibc` + `gcc-libs` so current packages (npm, nodejs, etc.) can run — without downloading a full system upgrade.
 
 ## How it works
 
@@ -91,10 +91,10 @@ Pre-built binaries for `arm64-v8a` are included in the repo (ARM64-only).
 
 ### 1. Installation
 
-1. Go to the [Releases page](https://github.com/GlobalTechInfo/RedTerm/releases/latest) and download the latest `app-debug.apk`
+1. Go to the [Releases page](https://github.com/GlobalTechInfo/RedT/releases/latest) and download the latest `app-debug.apk`
 2. On your Android device, go to **Settings → Security → Install unknown apps** and allow installation from your file manager or browser
 3. Open the downloaded APK file and tap **Install**
-4. Once installed, open **RedTerm** from your app drawer
+4. Once installed, open **RedT** from your app drawer
 
 > **Requirements:** Android 8.0+ (API 26+), ARM64 device. No root access needed.
 
@@ -102,7 +102,7 @@ Pre-built binaries for `arm64-v8a` are included in the repo (ARM64-only).
 
 ### 2. Home Screen
 
-When you open RedTerm for the first time you will see:
+When you open RedT for the first time you will see:
 
 - **"Select a distribution to launch" prompt** at the top — tap any distro card to open the terminal
 - **Distro cards** — list of installed Linux distributions (empty on first launch)
@@ -323,7 +323,7 @@ Changes apply immediately.
 | Setting | Details |
 |---------|---------|
 | **Wake lock** | Switch — when ON, keeps the CPU running when the screen is off (for downloads, compilations, server processes, etc.) and also holds a Wi-Fi lock so network connections stay alive |
-| **Disable battery optimization** | Button — opens the system dialog to exempt RedTerm from Android battery optimization; recommended for long heavy tasks (compilations, AI agents like opencode) so they are not throttled or killed in the background |
+| **Disable battery optimization** | Button — opens the system dialog to exempt RedT from Android battery optimization; recommended for long heavy tasks (compilations, AI agents like opencode) so they are not throttled or killed in the background |
 | **Backup Distro** | Button — creates a compressed tar.gz archive of the first installed distro's rootfs |
 | **Restore Distro** | Button — shows a list of available backup files; tap one to restore |
 
@@ -364,14 +364,14 @@ Want your own color scheme? Here's how:
 2. Tap **Backup Distro**
 3. The app creates a compressed archive named `{distroname}_backup.tar.gz`
 4. A toast shows the filename and file size
-5. The file is saved to the app's external files directory (`Android/data/com.redtermapp/files/`)
+5. The file is saved to the app's external files directory (`Android/data/com.redt/files/`)
 6. You can copy this file off the device using a file manager or USB transfer
 
 **⚠ Note:** Only the first installed distro (alphabetically) is backed up per tap. For multiple distros, run the backup after launching each distro.
 
 #### Restore
 
-1. Copy a backup `.tar.gz` file to `Android/data/com.redtermapp/files/`
+1. Copy a backup `.tar.gz` file to `Android/data/com.redt/files/`
 2. Go to **Settings → Power**
 3. Tap **Restore Distro**
 4. A dialog lists all `.tar.gz` files found in the app's files directory
@@ -385,7 +385,7 @@ Want your own color scheme? Here's how:
 
 1. Go to **Settings → Terminal**
 2. Tap **Export Config**
-3. A `RedTerm_config.json` file is saved to the app's external files directory
+3. A `RedT_config.json` file is saved to the app's external files directory
 4. A toast confirms the export
 
 **Exported settings:**
@@ -404,10 +404,10 @@ You can open the JSON file in any text editor, view or edit the values, and keep
 
 ### 11. Notification & Foreground Service
 
-When the terminal is running, RedTerm shows a **persistent notification** in the status bar with:
+When the terminal is running, RedT shows a **persistent notification** in the status bar with:
 
 - **Icon:** A terminal prompt symbol (❯_) matching the app launcher icon
-- **Title:** "RedTerm"
+- **Title:** "RedT"
 - **Text:** "Running"
 
 The notification ensures the app stays alive in the background. Swiping away the notification will **not** stop the terminal (the service continues).

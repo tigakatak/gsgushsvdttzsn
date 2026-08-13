@@ -12,7 +12,7 @@
         android:id="@+id/widget_distro_name"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="RedTerm"
+        android:text="RedT"
         android:textColor="#FF3333"
         android:textSize="18sp"
         android:textStyle="bold" />

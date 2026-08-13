@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.redtermapp"
+    namespace = "com.redt"
     compileSdk = 36
 
     buildFeatures {
@@ -12,7 +12,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.redtermapp"
+        applicationId = "com.redt"
         minSdk = 30
         targetSdk = 35
         versionCode = 2
@@ -24,7 +24,7 @@ android {
 
     signingConfigs {
         create("release") {
-            storeFile = file("redterm-release.jks")
+            storeFile = file("redt-release.jks")
             storePassword = System.getenv("KEYSTORE_PASSWORD")
             keyAlias = System.getenv("KEY_ALIAS")
             keyPassword = System.getenv("KEY_PASSWORD")

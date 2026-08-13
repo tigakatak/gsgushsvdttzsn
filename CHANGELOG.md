@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Battery optimization exemption**: a new button in Settings → Power opens the system dialog to exclude RedTerm from battery optimization, so long heavy tasks (compilations, AI agents like opencode) are not throttled or killed in the background.
+- **Battery optimization exemption**: a new button in Settings → Power opens the system dialog to exclude RedT from battery optimization, so long heavy tasks (compilations, AI agents like opencode) are not throttled or killed in the background.
 - **Wi-Fi lock**: while the terminal wake lock is held, the app now also keeps the Wi-Fi radio awake, so network-dependent programs keep their connection when the screen is off.
 
 ### Changed
@@ -58,13 +58,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Bash templates**: pick from eight built-in `.bashrc` templates (Stock, Powerline, Minimal, DevOps, Hacker, Starship, Matrix, Retro CRT) in Settings → Bash templates; applied per-distro, auto-applies directly when only one distro is installed, one template can be applied to multiple distros at once, and each distro can be reset to its original `.bashrc`. The original `.bashrc` is backed up before the first overwrite.
 - **Bell/command feedback**: terminal rings (haptic vibration) on BEL, and `PROMPT_COMMAND` rings the bell when a command exits with a non-zero status.
-- **Export terminal output**: Copy, Paste and Export buttons in the sessions drawer; exported transcripts are saved to `/sdcard/RedTerm/exports/`.
+- **Export terminal output**: Copy, Paste and Export buttons in the sessions drawer; exported transcripts are saved to `/sdcard/RedT/exports/`.
 - **Dynamic session title**: toolbar now shows `distro › /cwd`, updated live while a session runs.
 - **Per-distro management**: MainActivity cards now show rootfs size and a long-press menu with Launch / Files / Backup now / Remove.
 - **Custom extra keys**: two editable key rows in Settings (space-separated tokens: ESC, TAB, CTRL, ALT, HOME, END, UP/DOWN/LEFT/RIGHT, INS, DEL, BACKSPACE, MENU, `&&` — anything else is typed as text).
 - **Open terminal here**: FileBrowser menu action launches a terminal session rooted at the current directory.
 - **App lock**: optional 4-8 digit PIN required when opening the app.
-- **Settings backup**: Import Config button added next to Export Config (`RedTerm_config.json`).
+- **Settings backup**: Import Config button added next to Export Config (`RedT_config.json`).
 - **Keep screen on**: the wake lock toggle now also keeps the screen lit while the terminal is open.
 - **Widget session count**: widget shows the number of active sessions and a contextual tap hint; a widget config screen lets you pick which distro the widget launches.
 - **Split view**: Split button in the quick panel shows two terminal panes side-by-side; extra keys route to the focused pane; split mode collapses automatically when a session exits.
@@ -75,7 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Home-screen widget**: quick launch a distro from the launcher.
 - **Night mode**: automatic switching to AMOLED between 6 PM and 6 AM (toggle in Settings).
 - **Session persistence**: sessions survive activity restarts and are resumed on reopen.
-- **Distro backup/restore**: improved multi-select backup with progress, restore validation, and backups under `/sdcard/RedTerm/`.
+- **Distro backup/restore**: improved multi-select backup with progress, restore validation, and backups under `/sdcard/RedT/`.
 - **CPU indicator**: live CPU usage shown in the service notification.
 - **Keyboard shortcuts**: F1-F12 keys emit the proper escape sequences.
 - **Output coalescing**: terminal redraws batched via Choreographer for smoother rendering.

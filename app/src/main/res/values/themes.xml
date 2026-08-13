@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.RedTermApp" parent="Theme.Material3.DayNight.NoActionBar">
+    <style name="Theme.RedTApp" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="colorPrimary">@color/primary</item>
         <item name="themeAccent">@color/primary</item>
         <item name="colorOnPrimary">@color/black</item>
@@ -16,7 +16,7 @@
         <item name="modifierHighlight">@color/modifier_highlight</item>
     </style>
 
-    <style name="Theme.RedTermApp.AMOLED" parent="Theme.Material3.DayNight.NoActionBar">
+    <style name="Theme.RedTApp.AMOLED" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="colorPrimary">@color/amoled_primary</item>
         <item name="themeAccent">@color/amoled_primary</item>
         <item name="colorOnPrimary">@color/black</item>
@@ -32,7 +32,7 @@
         <item name="modifierHighlight">@color/amoled_modifier_highlight</item>
     </style>
 
-    <style name="Theme.RedTermApp.Green" parent="Theme.Material3.DayNight.NoActionBar">
+    <style name="Theme.RedTApp.Green" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="colorPrimary">@color/green_primary</item>
         <item name="themeAccent">@color/green_primary</item>
         <item name="colorOnPrimary">@color/black</item>
@@ -48,7 +48,7 @@
         <item name="modifierHighlight">@color/green_modifier_highlight</item>
     </style>
 
-    <style name="Theme.RedTermApp.Light" parent="Theme.Material3.DayNight.NoActionBar">
+    <style name="Theme.RedTApp.Light" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="colorPrimary">@color/light_primary</item>
         <item name="themeAccent">@color/light_primary</item>
         <item name="colorOnPrimary">@color/white</item>
@@ -66,7 +66,7 @@
         <item name="modifierHighlight">@color/light_modifier_highlight</item>
     </style>
 
-    <style name="Theme.RedTermApp.Dracula" parent="Theme.Material3.DayNight.NoActionBar">
+    <style name="Theme.RedTApp.Dracula" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="colorPrimary">@color/dracula_primary</item>
         <item name="themeAccent">@color/dracula_primary</item>
         <item name="colorOnPrimary">@color/black</item>
@@ -82,7 +82,7 @@
         <item name="modifierHighlight">@color/dracula_modifier_highlight</item>
     </style>
 
-    <style name="Theme.RedTermApp.Nord" parent="Theme.Material3.DayNight.NoActionBar">
+    <style name="Theme.RedTApp.Nord" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="colorPrimary">@color/nord_primary</item>
         <item name="themeAccent">@color/nord_primary</item>
         <item name="colorOnPrimary">@color/black</item>
@@ -98,7 +98,7 @@
         <item name="modifierHighlight">@color/nord_modifier_highlight</item>
     </style>
 
-    <style name="Theme.RedTermApp.Tokyo" parent="Theme.Material3.DayNight.NoActionBar">
+    <style name="Theme.RedTApp.Tokyo" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="colorPrimary">@color/tokyo_primary</item>
         <item name="themeAccent">@color/tokyo_primary</item>
         <item name="colorOnPrimary">@color/black</item>
@@ -114,7 +114,7 @@
         <item name="modifierHighlight">@color/tokyo_modifier_highlight</item>
     </style>
 
-    <style name="Theme.RedTermApp.Gruvbox" parent="Theme.Material3.DayNight.NoActionBar">
+    <style name="Theme.RedTApp.Gruvbox" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="colorPrimary">@color/gruvbox_primary</item>
         <item name="themeAccent">@color/gruvbox_primary</item>
         <item name="colorOnPrimary">@color/black</item>
@@ -130,7 +130,7 @@
         <item name="modifierHighlight">@color/gruvbox_modifier_highlight</item>
     </style>
 
-    <style name="Theme.RedTermApp.Red" parent="Theme.Material3.DayNight.NoActionBar">
+    <style name="Theme.RedTApp.Red" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="colorPrimary">@color/red_primary</item>
         <item name="themeAccent">@color/red_primary</item>
         <item name="colorOnPrimary">@color/black</item>
@@ -146,7 +146,7 @@
         <item name="modifierHighlight">@color/red_modifier_highlight</item>
     </style>
 
-    <style name="Theme.RedTermApp.Custom" parent="Theme.Material3.DayNight.NoActionBar">
+    <style name="Theme.RedTApp.Custom" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="colorPrimary">@color/primary</item>
         <item name="themeAccent">@color/primary</item>
         <item name="colorOnPrimary">@color/black</item>

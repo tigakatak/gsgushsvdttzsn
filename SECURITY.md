@@ -11,11 +11,11 @@ anything you believe is a security problem.
 
 Preferred: use GitHub's private vulnerability reporting
 
-- https://github.com/GlobalTechInfo/RedTerm/security/advisories/new
+- https://github.com/GlobalTechInfo/RedT/security/advisories/new
 
 What to include:
 
-- The RedTerm version (or commit) you are using
+- The RedT version (or commit) you are using
 - The affected component (terminal, proot launcher, storage handling, etc.)
 - A description of the issue and, if possible, steps to reproduce
 - Impact you observed and any suggested fix

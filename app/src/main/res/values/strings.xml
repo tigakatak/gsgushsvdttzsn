@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">RedTerm</string>
+    <string name="app_name">RedT</string>
     <string name="notification_channel_terminal">Terminal Sessions</string>
     <string name="install">Install</string>
     <string name="settings">Settings</string>

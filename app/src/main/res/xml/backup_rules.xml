@@ -2,7 +2,7 @@
 <data-extraction-rules>
     <!--
         Cloud backup ke Google Drive dimatikan total (privasi + kuota):
-        tidak ada byte RedTerm yang ter-upload ke infra Google.
+        tidak ada byte RedT yang ter-upload ke infra Google.
         Device-to-device transfer saat pindah HP tetap aktif.
         domain="root" mencakup file/database/sharedpref/external sekaligus.
     -->

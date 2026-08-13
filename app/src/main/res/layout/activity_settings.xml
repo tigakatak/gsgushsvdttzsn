@@ -35,7 +35,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="RedTerm"
+                android:text="RedT"
                 android:textColor="?attr/terminalText"
                 android:textSize="26sp"
                 android:textStyle="bold"
@@ -631,7 +631,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Require PIN to open RedTerm"
+                            android:text="Require PIN to open RedT"
                             android:textColor="?attr/terminalText"
                             android:textSize="14sp" />
 
@@ -661,7 +661,7 @@
             android:id="@+id/version_info"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="RedTerm v1.0.0"
+            android:text="RedT v1.0.0"
             android:textColor="?attr/terminalText"
             android:textSize="13sp"
             android:alpha="0.4"

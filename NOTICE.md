@@ -1,6 +1,6 @@
 # Third-party notices
 
-RedTerm bundles and links against third-party software. This file lists the
+RedT bundles and links against third-party software. This file lists the
 components, their licenses and their sources. See each license's full text
 for the complete terms.
 
@@ -41,7 +41,7 @@ Binaries are cross-compiled for `arm64-v8a` via
 
 ## Note on the GPL
 
-The proot binary is licensed under the GPL. RedTerm ships proot as a
+The proot binary is licensed under the GPL. RedT ships proot as a
 separate binary executed by the app, and the source of the exact binaries
 used is available in this repository (`core/proot/src/main/cpp/`) and upstream at the
 sources above. If you believe any component above is listed incorrectly,

@@ -17,12 +17,12 @@
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 
     <application
-        android:name=".RedTermApp"
+        android:name=".RedTApp"
         android:allowBackup="true"
         android:extractNativeLibs="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
-        android:theme="@style/Theme.RedTermApp"
+        android:theme="@style/Theme.RedTApp"
         android:supportsRtl="true"
         android:networkSecurityConfig="@xml/network_security_config"
         android:dataExtractionRules="@xml/backup_rules"
@@ -31,7 +31,7 @@
         <activity
             android:name=".ui.WelcomeActivity"
             android:exported="true"
-            android:theme="@style/Theme.RedTermApp">
+            android:theme="@style/Theme.RedTApp">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -41,25 +41,26 @@
         <activity
             android:name=".ui.MainActivity"
             android:exported="false"
-            android:theme="@style/Theme.RedTermApp" />
+            android:theme="@style/Theme.RedTApp" />
 
         <activity
             android:name=".ui.TerminalActivity"
             android:exported="false"
-            android:theme="@style/Theme.RedTermApp"
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.RedTApp"
             android:configChanges="orientation|screenSize|keyboard|keyboardHidden"
             android:windowSoftInputMode="adjustResize" />
 
         <activity
             android:name=".ui.SettingsActivity"
             android:exported="false"
-            android:theme="@style/Theme.RedTermApp" />
+            android:theme="@style/Theme.RedTApp" />
 
         <service
             android:name=".ui.QuickSettingsTile"
             android:exported="true"
             android:icon="@mipmap/ic_launcher"
-            android:label="RedTerm"
+            android:label="RedT"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
@@ -69,10 +70,10 @@
         <activity
             android:name=".ui.WidgetConfigActivity"
             android:exported="true"
-            android:theme="@style/Theme.RedTermApp" />
+            android:theme="@style/Theme.RedTApp" />
 
         <receiver
-            android:name=".ui.RedTermWidgetProvider"
+            android:name=".ui.RedTWidgetProvider"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
@@ -92,7 +93,7 @@
         </service>
 
         <provider
-            android:name=".storage.RedTermDocumentsProvider"
+            android:name=".storage.RedTDocumentsProvider"
             android:authorities="${applicationId}.documents"
             android:exported="true"
             android:grantUriPermissions="true"

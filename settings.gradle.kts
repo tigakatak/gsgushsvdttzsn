@@ -15,7 +15,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "RedTermApp"
+rootProject.name = "RedTApp"
 include(":app")
 include(":core:proot")
 include(":core:terminal-view")
