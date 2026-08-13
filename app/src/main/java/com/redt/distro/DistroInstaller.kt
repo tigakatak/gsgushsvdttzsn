@@ -494,6 +494,57 @@ class DistroInstaller(private val context: Context) {
         safeWriteText(resolv, "nameserver 8.8.8.8\n")
     }
 
+    private fun ensureCaCertificates(rootfs: File): String? {
+        val bundlePaths = listOf(
+            "etc/pki/tls/certs/ca-bundle.crt",
+            "etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
+            "etc/ssl/certs/ca-certificates.crt",
+            "etc/ssl/cert.pem",
+            "etc/ssl/certs/ca-bundle.crt"
+        )
+        val missing = bundlePaths.mapNotNull { path ->
+            val f = File(rootfs, path)
+            if (!f.exists() || f.length() == 0L) path else null
+        }
+        if (missing.isEmpty()) return null
+
+        val androidCertDirs = listOf(
+            File("/system/etc/security/cacerts"),
+            File("/apex/com.android.conscrypt/cacerts")
+        )
+        val certs = StringBuilder()
+        for (certDir in androidCertDirs) {
+            if (!certDir.isDirectory) continue
+            certDir.listFiles()?.forEach { certFile ->
+                if (certFile.isFile) {
+                    try {
+                        val content = certFile.readText()
+                        if (content.contains("BEGIN CERTIFICATE")) {
+                            certs.append(content)
+                            if (!content.endsWith("\n")) certs.append("\n")
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+        }
+        if (certs.isEmpty()) return null
+
+        val written = mutableListOf<String>()
+        for (path in missing) {
+            val bundle = File(rootfs, path)
+            bundle.delete()
+            bundle.parentFile?.mkdirs()
+            try {
+                safeWriteText(bundle, certs.toString())
+                bundle.setReadable(true, false)
+                written.add(path)
+            } catch (e: Exception) {
+                Log.w("DistroInstaller", "Failed to write CA bundle to $path: ${e.message}")
+            }
+        }
+        return if (written.isNotEmpty()) "Populated CA certificates: ${written.joinToString()}" else null
+    }
+
     private fun ensureSupplementaryGroups(rootfs: File) {
         val group = File(rootfs, "etc/group")
         group.parentFile?.mkdirs()
@@ -556,6 +607,7 @@ class DistroInstaller(private val context: Context) {
             safeWriteText(hosts, "127.0.0.1 localhost\n::1 localhost\n")
         }
         writeResolvConf(rootfs)
+        ensureCaCertificates(rootfs)
         val fstab = File(rootfs, "etc/fstab")
         if (!fstab.exists()) {
             safeWriteText(fstab, "none /proc proc defaults 0 0\nnone /sys sysfs defaults 0 0\n")
@@ -669,6 +721,8 @@ class DistroInstaller(private val context: Context) {
             writeResolvConf(rootfs)
             repairs.add("Updated etc/resolv.conf to static DNS")
         }
+
+        ensureCaCertificates(rootfs)?.let { repairs.add(it) }
 
         return repairs.joinToString("\n")
     }

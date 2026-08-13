@@ -139,6 +139,11 @@ exec "$prootBin" -0 -L -r "$rootfsPath" -w /root --link2symlink --sysvipc --ashm
                 "manjaro" -> Triple("pacman -Syy --noconfirm", "pacman -S --noconfirm", "")
                 else -> Triple(":", ":", "")
             }
+            val prereq = when (distro) {
+                "debian", "ubuntu", "kali" -> "gawk"
+                else -> ""
+            }
+            val prereqCmd = if (prereq.isNotEmpty()) "$install $quiet $prereq 2>/dev/null && " else ""
 
             val rootDir = File(rootfsDir, "root").apply { mkdirs() }
             val isNew = !File(rootDir, ".init_done").exists()
@@ -166,12 +171,12 @@ alias mv='mv -i'
             if (isNew || !startup.exists()) {
                 startup.writeText("""if [ ! -f /root/.init_done ]; then
     echo '>>> First-time distro setup...'
-    if $update 2>/dev/null && $install $quiet nano wget sudo bash openssl 2>/dev/null; then
+    if $update 2>/dev/null && ${prereqCmd}$install $quiet nano wget sudo bash openssl ca-certificates 2>/dev/null; then
         touch /root/.init_done
         echo '>>> Setup complete.'
     else
         echo '>>> Setup was interrupted or failed - starting a repair shell.'
-        echo ">>> Run manually: $update && $install $quiet nano wget sudo bash openssl"
+        echo ">>> Run manually: $update && ${prereqCmd}$install $quiet nano wget sudo bash openssl ca-certificates"
     fi
 fi
 if command -v bash >/dev/null 2>&1; then
