@@ -10,6 +10,7 @@ import android.os.PowerManager
 import android.util.Log
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
+import com.redt.R
 import com.redt.distro.DistroInstaller
 import com.redt.RedTApp
 import com.redt.proot.ProotInstaller
