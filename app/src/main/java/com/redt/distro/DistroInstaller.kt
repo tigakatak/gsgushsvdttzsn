@@ -572,7 +572,7 @@ class DistroInstaller(private val context: Context) {
 
     private fun systemDnsServers(): List<String> {
         try {
-            val cm = context.getSystemService(android.content.ConnectivityManager::class.java)
+            val cm = context.getSystemService(android.net.ConnectivityManager::class.java)
             val network = cm?.activeNetwork
             if (network != null) {
                 val dns = cm.getLinkProperties(network)?.dnsServers
@@ -957,7 +957,6 @@ class DistroInstaller(private val context: Context) {
                 val target = try { Os.readlink(dir.absolutePath) } catch (_: Exception) { "" }
                 if (target.isNotEmpty()) {
                     entry.setLinkName(target)
-                    entry.isSymbolicLink = true
                 }
                 tar.putArchiveEntry(entry)
                 tar.closeArchiveEntry()
@@ -972,8 +971,7 @@ class DistroInstaller(private val context: Context) {
             tar.closeArchiveEntry()
             return
         }
-        val dirEntry = TarArchiveEntry(entryName.let { if (it.endsWith("/")) it else "$it/" })
-        dirEntry.isDirectory = true
+        val dirEntry = TarArchiveEntry(dir, entryName)
         tar.putArchiveEntry(dirEntry)
         tar.closeArchiveEntry()
         dir.listFiles()?.sortedBy { it.name }?.forEach { child ->
