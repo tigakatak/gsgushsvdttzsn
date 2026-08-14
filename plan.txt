@@ -1,0 +1,309 @@
+================================================================
+RedT — Audit Masalah Logika/Alur & Rencana Perbaikan
+================================================================
+Dibuat: 2026-08-14
+Lingkup: kode Kotlin app logic (app/src/main/java/com/redt/**).
+         Kode C proot (core/proot) di-skip (vendored upstream).
+
+Konvensi referensi: <file>:<baris>.
+
+
+----------------------------------------------------------------
+BAGIAN 1 — MASALAH AKUT (crash yang sedang terjadi)
+----------------------------------------------------------------
+
+[CRASH-1] ANR di main thread karena deleteRecursively() rootfs besar
+--------------------------------------------------------------------
+Gejala: app ter-kill dengan log:
+  "Application Not Responding for at least 5000 ms."
+  Thread: |ANR-WatchDog|
+  Stack: main (RUNNABLE)
+    libcore.io.Linux.remove (native)
+    libcore.io.BlockGuardOs.remove          <- guard I/O main thread
+    java.io.UnixFileSystem.delete -> File.delete
+    t3.k.q0 -> y2.g.z -> a.m0.v             <- deleteRecursively().walkBottomUp()
+                                               .fold{ it.delete() } (di-inline R8)
+    d3.b.onClick                             <- pemicu: TAP tombol
+    -> Handler -> Looper.main
+  w1.a == com.github.anrwatchdog.ANRWatchDog.ANRError
+
+Mekanisme (PASTI):
+  - Sebuah klik tombol memicu File.deleteRecursively() pada rootfs
+    penuh secara SINKRON di main thread.
+  - Untuk distro besar (ratusan ribu inode: Ubuntu/Kali/Manjaro full),
+    unlink berurutan butuh >5 detik.
+  - ANRWatchDog (RedTApp.kt:25, `ANRWatchDog().start()`) default:
+    timeout 5000 ms + melempar ANRError (Error) -> proses crash.
+  - `BlockGuardOs.remove` di stack = bukti I/O disk di main thread.
+
+Titik deleteRecursively() rootfs yang terjangkau dari tap:
+  - DistroInstaller.kt:770  (uninstall)
+  - DistroInstaller.kt:39   (install, langkah awal wipe rootfs lama)
+  - DistroInstaller.kt:87   (installFromFile)
+  - DistroInstaller.kt:142  (resetToDefault)
+  - DistroInstaller.kt:675  (repairRootfs, nested migration)
+  - SettingsActivity.kt:366 (restoreDistro)
+
+Status source saat ini:
+  Semua call site di atas SUDAH dibungkus withContext(Dispatchers.IO):
+    DistroUi.kt:21, WelcomeActivity.kt:245, SettingsActivity.kt:364,
+    TerminalService.kt:158 (SessionLauncher.prepare lewat service).
+  -> Crash kemungkinan dari APK build LEBIH LAMA sebelum wrapper IO
+     ditambahkan (DistroInstaller.kt & SessionLauncher.kt baru diubah
+     ~2 jam lalu). TAPI tidak ada jaminan terpusat; bila ada satu call
+     site baru yang lupa withContext(IO), bug ini kembali.
+
+Masalah turunan dari deleteRecursively() yang sama:
+  - `File.deleteRecursively()` memakai walkBottomUp() yang menurunkan
+    direktori berdasarkan File.isDirectory -> FOLLOWS symlink.
+  - Symlink absolut buatan package manager (apt/dnf/pacman) di runtime
+    bisa resolve ke luar rootfs di host Android. Dengan permission
+    MANAGE_EXTERNAL_STORAGE, delete() bisa BENAR-BENAR menghapus file
+    di luar rootfs (mis. /sdcard/RedT backup) -> kehilangan data.
+  - Siklus symlink (A->B, B->A) tanpa tracking canonical path ->
+    loop tak hingga -> hang.
+  - Bukti author tahu hazard ini: RedTDocumentsProvider.deleteWithoutFollowingLinks
+    (RedTDocumentsProvider.kt:313-320) memakai Os.lstat agar TIDAK ikut
+    symlink. Tapi jalur uninstall utama TIDAK memakainya.
+  - Format.dirSize (Format.kt:16-38) punya visited canonical-set untuk
+    menghindari loop; deleteRecursively tidak punya proteksi serupa.
+
+
+----------------------------------------------------------------
+BAGIAN 2 — MASALAH LOGIKA/ALUR LAINNYA (prioritas menurun)
+----------------------------------------------------------------
+
+[A1] DNS di-hardcode 8.8.8.8, menimpa resolv.conf setiap launch
+-----------------------------------------------------------------
+  - DistroInstaller.kt:491-495  writeResolvConf() selalu tulis
+    "nameserver 8.8.8.8".
+  - DistroInstaller.kt:716-723  repairRootfs() (dipanggil tiap launch
+    via SessionLauncher.kt:30) menimpa resolv.conf bila tidak mengandung
+    "8.8.8.8".
+  - DistroInstaller.kt:609      setupRootfs() memanggil writeResolvConf.
+  Dampak: DNS user/NetworkManager/distro/DHCP selalu ditimpa ke Google
+  DNS. Tidak baca DNS sistem Android. 8.8.8.8 diblok di beberapa jaringan.
+
+[A2] resetToDefault melewatkan verifikasi SHA-256 pada cabang tarball cache
+--------------------------------------------------------------------------
+  - DistroInstaller.kt:146-158  cabang "tarball cache ada" langsung
+    extractTarball() TANPA verifyChecksum().
+  - Bandingkan install() yang selalu verifikasi (DistroInstaller.kt:51-54).
+  Dampak: integritas tarball on-disk tidak dicek ulang. Risiko rendah
+  (storage app-private) tapi inkonsisten; tamper via ADB/root lolos.
+
+[A3] Heuristik migrasi "nested rootfs" terlalu agresif + jalan tiap launch
+--------------------------------------------------------------------------
+  - DistroInstaller.kt:656-681  setiap direktori top-level yang
+    name.contains('-') DAN punya anak bin/ dipindahkan ke root lalu
+    dihapus (deleteRecursively).
+  - Dipanggil via repairRootfs -> SessionLauncher.kt:30 tiap buka session.
+  Dampak: untuk rootfs segar no-op, tapi begitu user instal sesuatu yang
+    membuat top-level dir bersyarat (mis. toolchain *-bin/), repair
+    berikutnya bisa memigrasi & menghapusnya -> korupsi. Plus I/O sia-sia
+    tiap launch.
+
+[A4] Race lifecycle: ACTION_EXIT vs createSession yang sedang in-flight
+----------------------------------------------------------------------
+  - TerminalService.kt:62  pendingDistros hanya mengunci per-distro,
+    bukan global.
+  - TerminalService.kt:118-123  ACTION_EXIT -> finishAllSessions() +
+    stopSelf().
+  - TerminalService.kt:145-194  createSession menjalankan prepare() di
+    Dispatchers.IO lalu sessionStore.addSession().
+  Dampak: tap "Exit" tepat saat session sedang diluncurkan -> addSession
+    menambah session ke store yang barusan di-clear, di service yang
+    sedang di-destroy. onDestroy meng-cancel serviceScope tapi ada window
+    antara addSession dan onDestroy -> session yatim tanpa notifikasi
+    foreground.
+
+[A5] ensureSupplementaryGroups — cek duplikat entry tidak konsisten
+-------------------------------------------------------------------
+  - DistroInstaller.kt:559  base entries dicek `existing.contains(":$name")`
+    (mis. ":root").
+  - DistroInstaller.kt:572  group android dicek `existing.contains(":$name:")`
+    (mis. ":android_3003:").
+  Dampak: bila etc/group distro memakai bentuk `root:x:0:` (anggota
+    kosong, standar), ":root" tidak match -> root:x:0:root ditambahkan ->
+    DUPLIKAT entry group. Dipanggil >=2x saat install dan tiap launch.
+
+[B1] WelcomeActivity.startInstall uninstall lalu install (redundan)
+------------------------------------------------------------------
+  - WelcomeActivity.kt:245-247  withContext(IO){ uninstall } lalu install().
+  - install() sendiri sudah hapus rootfs (:39) dan tarball cache (:44)
+    lalu download ulang.
+  Dampak: uninstall murni redundan; tiap reinstall selalu re-download
+    penuh walau tarball cache ada. Tarball cache hanya berguna bagi
+    resetToDefault.
+
+[B2] repairRootfs berjalan penuh tiap launch
+--------------------------------------------
+  - SessionLauncher.kt:30  prepare() -> repairRootfs tiap session baru.
+  Dampak: listFiles() scan + beberapa readText() (passwd/hosts/resolv)
+    tiap launch; mayoritas no-op untuk rootfs sehat -> pemborosan I/O.
+
+[B3] Progress download tidak muncul bila server tak kirim Content-Length
+-----------------------------------------------------------------------
+  - DistroInstaller.kt:225  if (total > 0) { onProgress }.
+  contentLengthLong = -1 bila unknown -> UI tertinggal di 0%.
+  Beberapa mirror/github redirect begini.
+
+[C1] backup() mengandalkan binary tar sistem (toybox)
+-----------------------------------------------------
+  - DistroInstaller.kt:777-805  ProcessBuilder("tar", "-czf", ...).
+  Gagal diam-diam return false bila toybox tar/gzip tak tersedia.
+  commons-compress sudah ada di classpath sebagai fallback potensial.
+
+[C2] extractWithNativeXz exit-code non-zero memicu re-ekstraksi penuh
+---------------------------------------------------------------------
+  - DistroInstaller.kt:303-335  exit code dicek SETELAH stream habis
+    dibaca. Peringatan/garbage xz di akhir (non-zero exit) -> exception
+    -> fallback re-ekstraksi penuh via Java XZ, membuang waktu walau
+    output sebenarnya valid.
+
+[C3] uninstall memakai nama raw tanpa validateDistroName
+---------------------------------------------------------
+  - DistroInstaller.kt:768-775  getRootfsDir divalidasi, tapi
+    File(...,"installed/$distroName") dan tarball pakai raw name.
+  Inkonsisten dengan saveInstalled/getRootfsDir; lubang sanitasi kecil.
+
+[C4] install() menyimpan tarball terunduh (cache tumbuh tak terlihat)
+---------------------------------------------------------------------
+  - DistroInstaller.kt:43-44  hapus di awal, tidak hapus di akhir
+    (untuk dukungan resetToDefault).
+  Tidak ada UI bersihkan cache tarball; label ukuran (Format.dirSize)
+    hanya menghitung rootfs, jadi tarball (puluhan MB-GB per distro)
+    menumpuk tak terlihat.
+
+[C5] CrashHandler menulis log tapi tidak diekspos
+-------------------------------------------------
+  - CrashHandler.kt:18  tulis ke getExternalFilesDir/crash.
+  Tidak ada UI Settings untuk membuka/mengirim crash log.
+
+[C6] setupPinDialog "Cancel" mematikan kunci
+--------------------------------------------
+  - AppLock.kt:129-132  Cancel -> KEY_LOCK_ENABLED=false.
+  Membatalkan set-up PIN jadi mematikan app lock -> perilaku mengejutkan.
+
+
+----------------------------------------------------------------
+BAGIAN 3 — RENCANA PERBAIKAN
+----------------------------------------------------------------
+
+Fase 1 — Hilangkan crash ANUT (CRASH-1)  [prioritas tertinggi]
+--------------------------------------------------------------
+1.1 Tambah helper terpusat di DistroInstaller:
+        private suspend fun deleteRootfsSafe(dir: File)
+    - WAJIB berjalan di Dispatchers.IO (suspend + withContext(IO) internal
+      sebagai jaring pengaman; tetap dokumentasikan pemanggil harus off-main).
+    - lstat-aware: TIDAK mengikuti symlink (reuse pola
+      RedTDocumentsProvider.deleteWithoutFollowingLinks:313-320).
+    - cycle-safe: track canonical path yang sudah dikunjungi (mirip
+      Format.dirSize:16-38) supaya siklus symlink tak loop.
+    - jalankan Os.lstat per entry; untuk symlink -> hapus link saja;
+      untuk direktori -> rekursi manual; untuk file -> delete().
+    - return Boolean sukses; log (bukan throw) bila ada node tak terhapus.
+
+1.2 Ganti SEMUA deleteRecursively()/delete() rootfs dengan deleteRootfsSafe():
+    - DistroInstaller.kt:39   (install)
+    - DistroInstaller.kt:87   (installFromFile)
+    - DistroInstaller.kt:142  (resetToDefault)
+    - DistroInstaller.kt:675  (repairRootfs nested)
+    - DistroInstaller.kt:770  (uninstall) -> uninstall dijadikan suspend
+      atau dipisah ke suspend fun uninstallAsync(); update pemanggil
+      (DistroUi.kt:21 sudah di IO; WelcomeActivity.kt:245 sudah di IO).
+    - SettingsActivity.kt:366 (restoreDistro, sudah di IO).
+
+1.3 RedTApp.kt:25 — ubah ANRWatchDog agar tidak hard-crash:
+    - naikkan threshold (mis. ANRWatchDog(15000)) ATAU
+    - pasang anrListener { /* log only, jangan lempar Error */ }.
+    Tujuan: operasi disk berat sesekali terdegradasi (selesai pelan /
+    dialog tetap responsif), bukan crash. (Tetap kerja utama: pastikan
+    delete off-main lewat 1.1-1.2.)
+
+1.4 Verifikasi:
+    - Konfirmasi tak ada call site delete rootfs di main thread
+      (grep deleteRootfsSafe/deleteRecursively; cek dispatcher pemanggil).
+    - Smoke test: hapus distro besar -> UI tetap responsif (dialog
+      progress), tidak ada ANRError, tidak ada file tersisa di luar rootfs.
+
+Fase 2 — Integritas & behavior rootfs  [A1, A2, A3]
+----------------------------------------------------
+2.1 [A1] DNS: tulis resolv.conf sekali saat install (setupRootfs),
+    HAPUS penimpaan di repairRootfs (:716-723). Idealnya resolve DNS
+    dari ConnectivityManager Android; minimal baca host resolv.conf
+    dan fallback 8.8.8.8 hanya bila kosong.
+
+2.2 [A2] resetToDefault: tambahkan verifyChecksum(tarball, distro.sha256)
+    di cabang tarball cache (DistroInstaller.kt:147, sebelum extractTarball).
+
+2.3 [A3] repairRootfs nested migration:
+    - Pindahkan ke jalur one-time saat install (setupRootfs), bukan tiap
+      launch.
+    - Perketat kriteria: hanya jika rootfs TIDAK punya /bin/sh DAN
+      persis satu subdir menampung seluruh layout.
+    - Hapus blok :656-681 dari repairRootfs.
+
+Fase 3 — Lifecycle & efisiensi  [A4, A5, B1, B2, B3]
+----------------------------------------------------
+3.1 [A4] TerminalService: tambah guard global `private var exiting = false`
+    di ACTION_EXIT; createSession cek `if (exiting) return` sebelum
+    addSession; reset exiting=false di onCreate. Cegah session yatim.
+
+3.2 [A5] ensureSupplementaryGroups: parse per-baris, bandingkan field
+    nama group (split(':').first()), bukan substring contains. Hilangkan
+    duplikat entry.
+
+3.3 [B1] WelcomeActivity.startInstall: hapus uninstall eksplisit
+    (:245); andalkan wipe internal install(). (Opsional: buat install()
+    reuse tarball cache bila checksum cocok agar tak selalu re-download.)
+
+3.4 [B2] SessionLauncher.prepare: pisahkan one-time fixup (sentinel
+    .perms_fixed) dari lazy repair; jangan jalankan scan nested tiap launch.
+
+3.5 [B3] downloadTarball: bila contentLengthLong < 0, tampilkan
+    byte/detik indeterminate (bukan persen) agar UI tidak tertinggal 0%.
+
+Fase 4 — Robustness minor  [C1-C6]
+----------------------------------
+4.1 [C1] backup(): tambahkan fallback Java (commons-compress
+    TarArchiveOutputStream + GzipCompressorOutputStream) bila `tar`
+    sistem tak ada/gagal.
+4.2 [C2] extractWithNativeXz: bila xz exit non-zero TAPI output tar
+    valid (entry terbaca tanpa exception), toleransi peringatan alih-alih
+    re-ekstraksi penuh.
+4.3 [C3] uninstall: validasi distroName lewat validateDistroName() untuk
+    path installed/ & tarball juga.
+4.4 [C4] Tambah opsi "Clear tarball cache" di Settings + sertakan ukuran
+    tarball di label (atau hapus tarball otomatis bila reset dinonaktifkan).
+4.5 [C5] Tambah entry Settings untuk membuka/membagi crash log
+    (getExternalFilesDir/crash).
+4.6 [C6] setupPinDialog: Cancel cukup tutup dialog tanpa mengubah
+    KEY_LOCK_ENABLED.
+
+
+----------------------------------------------------------------
+URUTAN EKSEKUSI
+----------------------------------------------------------------
+  Sekarang : Fase 1 (CRASH-1) — wajib, eliminasi crash.
+  Berikut  : Fase 2 (A1/A2/A3) — sentuh filesystem user tiap launch.
+  Lalu     : Fase 3 (A4/A5/B*) — lifecycle & efisiensi.
+  Terakhir : Fase 4 (C*) — hygiene.
+
+  Catatan: Fase 1.1-1.2 sekaligus menutup hazard symlink di BAGIAN 1
+  (mengikuti symlink -> data loss/hang) karena deleteRootfsSafe() lstat-aware.
+
+
+----------------------------------------------------------------
+VERIFIKASI KESELURUHAN (per fase)
+----------------------------------------------------------------
+  Fase 1: hapus distro besar -> responsif, tanpa ANRError; cek tak ada
+          file terhapus di luar rootfs (bandingkan /sdcard/RedT sebelum/
+          sesudah; symlk-cycle diuji dengan rootfs uji yang punya symlink
+          loop -> harus selesai, bukan hang).
+  Fase 2: resolv.conf tak ditimpa setelah user ubah; reset cache gagal
+          checksum -> ditolak; nested migration hanya saat install.
+  Fase 3: tap Exit saat launching -> tak ada session yatim; group file
+          tanpa duplikat; reinstall reuse cache bila diaktifkan.
+  Fase 4: backup tanpa toybox tetap jalan; crash log terbuka dari UI.
+================================================================

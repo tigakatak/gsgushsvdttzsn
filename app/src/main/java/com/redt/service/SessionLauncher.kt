@@ -130,20 +130,20 @@ exec "$prootBin" -0 -L -r "$rootfsPath" -w /root --link2symlink --sysvipc --ashm
                 "fedora", "rocky", "almalinux" -> Triple(
                     "dnf check-update || true", "dnf install -y", "-q"
                 )
-                "void" -> Triple("xbps-install -Su", "xbps-install -S", "")
+                "void" -> Triple("xbps-install -S", "xbps-install -Sy", "")
                 "arch", "artix" -> Triple(
                     "pacman -Syy --noconfirm",
                     "pacman -S --noconfirm --needed glibc gcc-libs",
                     "",
                 )
                 "manjaro" -> Triple("pacman -Syy --noconfirm", "pacman -S --noconfirm", "")
-                else -> Triple(":", ":", "")
+                else -> Triple(":", "false", "")
             }
             val prereq = when (distro) {
                 "debian", "ubuntu", "kali" -> "gawk"
                 else -> ""
             }
-            val prereqCmd = if (prereq.isNotEmpty()) "$install $quiet $prereq 2>/dev/null && " else ""
+            val prereqCmd = if (prereq.isNotEmpty()) "$install $quiet $prereq 2>>/root/.setup_error.log && " else ""
 
             val rootDir = File(rootfsDir, "root").apply { mkdirs() }
             val isNew = !File(rootDir, ".init_done").exists()
@@ -168,21 +168,30 @@ alias mv='mv -i'
 """)
             }
             val startup = File(rootDir, ".startup")
-            if (isNew || !startup.exists()) {
-                startup.writeText("""if [ ! -f /root/.init_done ]; then
+            val startupScript = """if [ ! -f /root/.init_done ] || ! command -v nano >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1; then
     echo '>>> First-time distro setup...'
-    if $update 2>/dev/null && ${prereqCmd}$install $quiet nano wget sudo bash openssl ca-certificates 2>/dev/null; then
-        touch /root/.init_done
-        echo '>>> Setup complete.'
+    if $update 2>/root/.setup_error.log && ${prereqCmd}$install $quiet nano wget sudo bash openssl ca-certificates 2>>/root/.setup_error.log; then
+        if command -v nano >/dev/null 2>&1 && command -v openssl >/dev/null 2>&1; then
+            touch /root/.init_done
+            echo '>>> Setup complete.'
+        else
+            echo '>>> Install reported success but packages are missing - will retry next session.'
+            echo '>>> Details: /root/.setup_error.log'
+        fi
     else
         echo '>>> Setup was interrupted or failed - starting a repair shell.'
+        echo '>>> Details: /root/.setup_error.log'
         echo ">>> Run manually: $update && ${prereqCmd}$install $quiet nano wget sudo bash openssl ca-certificates"
     fi
 fi
 if command -v bash >/dev/null 2>&1; then
     exec bash -i
 fi
-""")
+"""
+            if (isNew || !startup.exists() ||
+                runCatching { startup.readText() != startupScript }.getOrDefault(true)
+            ) {
+                startup.writeText(startupScript)
             }
         } catch (e: Exception) {
             Log.w("SessionLauncher", "writeShellConfigs failed: ${e.message}")

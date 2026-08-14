@@ -5,6 +5,10 @@ import android.os.Environment
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.redt.distro.DistroInstaller
 import com.redt.session.terminalSessionStore
 import com.redt.util.Format
@@ -12,9 +16,9 @@ import java.io.File
 
 object DistroUi {
 
-    fun deleteDistro(activity: AppCompatActivity, installer: DistroInstaller, name: String) {
+    suspend fun deleteDistro(activity: AppCompatActivity, installer: DistroInstaller, name: String) {
         activity.terminalSessionStore.removeSessionsForDistro(name)
-        installer.uninstall(name)
+        withContext(Dispatchers.IO) { installer.uninstall(name) }
         RedTWidgetProvider.updateAll(activity)
     }
 
@@ -28,9 +32,22 @@ object DistroUi {
             .setTitle("Remove $name?")
             .setMessage("This will delete the rootfs, cached files and all data for $name, and kill any running session for it.")
             .setPositiveButton("Delete") { _, _ ->
-                deleteDistro(activity, installer, name)
-                onDeleted()
-                android.widget.Toast.makeText(activity, "$name removed", android.widget.Toast.LENGTH_SHORT).show()
+                val dialog = android.app.ProgressDialog(activity).apply {
+                    setTitle("Removing $name")
+                    setMessage("Deleting rootfs...")
+                    setIndeterminate(true)
+                    setCancelable(false)
+                }
+                dialog.show()
+                activity.lifecycleScope.launch {
+                    try {
+                        deleteDistro(activity, installer, name)
+                        onDeleted()
+                        android.widget.Toast.makeText(activity, "$name removed", android.widget.Toast.LENGTH_SHORT).show()
+                    } finally {
+                        if (!activity.isFinishing && !activity.isDestroyed) dialog.dismiss()
+                    }
+                }
             }
             .setNegativeButton("Cancel", null)
             .show()

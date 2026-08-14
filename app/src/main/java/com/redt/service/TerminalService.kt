@@ -57,6 +57,8 @@ class TerminalService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var userWakelockHeld = false
     private var autoWakelockHeld = false
+    @Volatile
+    private var exiting = false
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val launchScripts = IdentityHashMap<TerminalSession, File>()
     private val pendingDistros = mutableSetOf<String>()
@@ -65,6 +67,7 @@ class TerminalService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        exiting = false
         startForeground(RedTApp.NOTIF_ID_TERMINAL, buildNotification())
         if (sessionStore.sessions.value.isEmpty()) sweepStaleLaunchScripts()
     }
@@ -116,6 +119,8 @@ class TerminalService : Service() {
                 intent.getStringExtra(EXTRA_DISTRO)?.let(::createSession)
             }
             ACTION_EXIT -> {
+                exiting = true
+                sessionStore.signalExit()
                 finishAllSessions()
                 releaseWakeLock()
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -143,6 +148,7 @@ class TerminalService : Service() {
     }
 
     private fun createSession(distroName: String) {
+        if (exiting) return
         if (!ProotInstaller.isInstalled(applicationContext)) {
             Toast.makeText(
                 this,
@@ -156,6 +162,10 @@ class TerminalService : Service() {
             var launchScript: File? = null
             try {
                 val spec = withContext(Dispatchers.IO) { launcher.prepare(distroName) }
+                if (exiting) {
+                    spec.launchScript.delete()
+                    return@launch
+                }
                 launchScript = spec.launchScript
                 val bridge = TerminalSessionClientBridge(::handleSessionFinished)
                 val session = TerminalSession(

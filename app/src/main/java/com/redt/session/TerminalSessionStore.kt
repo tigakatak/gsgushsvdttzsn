@@ -5,8 +5,11 @@ import com.redt.RedTApp
 import com.redt.service.TerminalSessionClientBridge
 import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.IdentityHashMap
 
@@ -17,6 +20,9 @@ internal class TerminalSessionStore {
 
     private val _currentIndex = MutableStateFlow(-1)
     val currentIndex: StateFlow<Int> = _currentIndex.asStateFlow()
+
+    private val _exitSignal = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val exitSignal: SharedFlow<Unit> = _exitSignal.asSharedFlow()
 
     private val sessionDistros = IdentityHashMap<TerminalSession, String>()
     private val sessionClients = IdentityHashMap<TerminalSession, TerminalSessionClientBridge>()
@@ -101,6 +107,10 @@ internal class TerminalSessionStore {
             }
         }
         return false
+    }
+
+    fun signalExit() {
+        _exitSignal.tryEmit(Unit)
     }
 
     fun removeSessionsForDistro(distroName: String) {

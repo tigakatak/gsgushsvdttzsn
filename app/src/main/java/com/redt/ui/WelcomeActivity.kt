@@ -194,14 +194,27 @@ class WelcomeActivity : AppCompatActivity() {
             .setTitle(distro.displayName)
             .setMessage("Delete this distro?")
             .setPositiveButton("Delete") { _, _ ->
-                DistroUi.deleteDistro(this, installer, distro.name)
-                refreshDistroStates()
-                selectedCard?.setCardBackgroundColor(themeColor(R.attr.extraKeysBg, 0xFF181825.toInt()))
-                selectedCard?.strokeWidth = 0
-                selectedCard = null
-                selectedDistro = null
-                installButton.isEnabled = false
-                installButton.text = getString(R.string.install)
+                val dialog = android.app.ProgressDialog(this).apply {
+                    setTitle("Removing ${distro.displayName}")
+                    setMessage("Deleting rootfs...")
+                    setIndeterminate(true)
+                    setCancelable(false)
+                }
+                dialog.show()
+                lifecycleScope.launch {
+                    try {
+                        DistroUi.deleteDistro(this@WelcomeActivity, installer, distro.name)
+                        refreshDistroStates()
+                        selectedCard?.setCardBackgroundColor(themeColor(R.attr.extraKeysBg, 0xFF181825.toInt()))
+                        selectedCard?.strokeWidth = 0
+                        selectedCard = null
+                        selectedDistro = null
+                        installButton.isEnabled = false
+                        installButton.text = getString(R.string.install)
+                    } finally {
+                        if (!isFinishing && !isDestroyed) dialog.dismiss()
+                    }
+                }
             }
             .setNegativeButton("Cancel", null)
             .show()
@@ -225,17 +238,23 @@ class WelcomeActivity : AppCompatActivity() {
         cancelButton.visibility = android.view.View.VISIBLE
         progressGroup.visibility = android.view.View.VISIBLE
         progressText.text = "Installing ${distro.displayName}..."
+        progressBar.isIndeterminate = false
         progressBar.progress = 0
 
         installJob = lifecycleScope.launch {
             try {
-                withContext(Dispatchers.IO) { installer.uninstall(distro.name) }
                 refreshDistroStates()
                 installer.install(distro) { progress ->
                     runOnUiThread {
                         try {
-                            progressBar.progress = progress.percent
-                            progressText.text = "${progress.percent}% - ${progress.speed}"
+                            if (progress.percent < 0) {
+                                progressBar.isIndeterminate = true
+                                progressText.text = progress.speed
+                            } else {
+                                progressBar.isIndeterminate = false
+                                progressBar.progress = progress.percent
+                                progressText.text = "${progress.percent}% - ${progress.speed}"
+                            }
                         } catch (_: Exception) {}
                     }
                 }

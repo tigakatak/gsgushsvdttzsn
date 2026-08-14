@@ -22,7 +22,13 @@ class RedTApp : Application() {
                     .build()
             )
         }
-        com.github.anrwatchdog.ANRWatchDog().start()
+        com.github.anrwatchdog.ANRWatchDog(15000).apply {
+            setANRListener { error ->
+                android.util.Log.e("RedTApp", "ANR detected (log only)", error)
+            }
+            setIgnoreDebugger(true)
+            start()
+        }
         createNotificationChannel()
     }
 

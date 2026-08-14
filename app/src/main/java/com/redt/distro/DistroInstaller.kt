@@ -2,13 +2,18 @@ package com.redt.distro
 
 import android.content.Context
 import android.provider.DocumentsContract
+import android.system.Os
+import android.system.OsConstants
 import android.util.Log
 import com.redt.ui.Prefs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
+import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream
 import org.apache.commons.compress.compressors.xz.XZCompressorInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
+import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileInputStream
@@ -36,7 +41,7 @@ class DistroInstaller(private val context: Context) {
         try {
             val rootfsDir = getRootfsDir(distro.name)
             if (rootfsDir.exists()) {
-                rootfsDir.deleteRecursively()
+                deleteRootfsSafe(rootfsDir)
             }
             rootfsDir.mkdirs()
 
@@ -84,7 +89,7 @@ class DistroInstaller(private val context: Context) {
         try {
             val rootfsDir = getRootfsDir(distroName)
             if (rootfsDir.exists()) {
-                rootfsDir.deleteRecursively()
+                deleteRootfsSafe(rootfsDir)
             }
             rootfsDir.mkdirs()
 
@@ -139,7 +144,7 @@ class DistroInstaller(private val context: Context) {
         try {
             val rootfsDir = getRootfsDir(distroName)
             if (rootfsDir.exists()) {
-                rootfsDir.deleteRecursively()
+                deleteRootfsSafe(rootfsDir)
             }
             rootfsDir.mkdirs()
 
@@ -148,6 +153,11 @@ class DistroInstaller(private val context: Context) {
                 install(distro, onProgress)
                 return@withContext true
             }
+            val expectedSha = distro.sha256
+            if (expectedSha.isNotEmpty()) {
+                verifyChecksum(tarball, expectedSha)
+            }
+            checkCancel()
             extractTarball(tarball, rootfsDir, onProgress)
             checkCancel()
             fixupDirectoryPermissions(rootfsDir)
@@ -171,15 +181,66 @@ class DistroInstaller(private val context: Context) {
 
     class CancelledException : Exception("Installation cancelled")
 
+    /**
+     * Deletes a rootfs tree safely:
+     * - runs on Dispatchers.IO regardless of caller,
+     * - never follows symlinks (lstat-based, like
+     *   RedTDocumentsProvider.deleteWithoutFollowingLinks),
+     * - tracks visited canonical paths so symlink cycles cannot loop forever.
+     * Failures are logged, not thrown; returns false if any node could not be
+     * removed.
+     */
+    suspend fun deleteRootfsSafe(dir: File): Boolean = withContext(Dispatchers.IO) {
+        if (!dir.exists()) return@withContext true
+        val visited = mutableSetOf<String>()
+        var failed = false
+
+        fun deleteNode(f: File) {
+            val canonical = try {
+                f.canonicalPath
+            } catch (_: Exception) {
+                f.absolutePath
+            }
+            if (!visited.add(canonical)) return
+            val isLink = try {
+                OsConstants.S_ISLNK(Os.lstat(f.absolutePath).st_mode)
+            } catch (_: Exception) {
+                false
+            }
+            if (isLink || !f.isDirectory) {
+                if (!f.delete() && existsRegardlessOfLink(f)) {
+                    failed = true
+                    Log.w("DistroInstaller", "Failed to delete ${f.absolutePath}")
+                }
+                return
+            }
+            f.listFiles()?.forEach { deleteNode(it) }
+            if (!f.delete() && existsRegardlessOfLink(f)) {
+                failed = true
+                Log.w("DistroInstaller", "Failed to delete dir ${f.absolutePath}")
+            }
+        }
+
+        deleteNode(dir)
+        !failed
+    }
+
+    private fun existsRegardlessOfLink(f: File): Boolean = try {
+        val stat = Os.lstat(f.absolutePath)
+        stat.st_mode != 0
+    } catch (_: Exception) {
+        f.exists()
+    }
+
     private fun checkCancel() {
         if (cancelled) throw CancelledException()
     }
 
-    private fun cleanup(distroName: String) {
+    private suspend fun cleanup(distroName: String) {
         if (runCatching { validateDistroName(distroName) }.isFailure) return
         try {
             val dir = getRootfsDir(distroName)
-            dir.deleteRecursively()
+            deleteRootfsSafe(dir)
             com.redt.util.Format.invalidate(dir)
         } catch (_: Exception) {}
         try {
@@ -222,13 +283,15 @@ class DistroInstaller(private val context: Context) {
                         checkCancel()
                         output.write(buffer, 0, read)
                         downloaded += read
+                        val elapsed = (System.currentTimeMillis() - startTime) / 1000
+                        val speed = if (elapsed > 0) {
+                            "${(downloaded / 1000 / elapsed)} KB/s"
+                        } else "0 KB/s"
                         if (total > 0) {
                             val percent = ((downloaded * 100) / total).toInt()
-                            val elapsed = (System.currentTimeMillis() - startTime) / 1000
-                            val speed = if (elapsed > 0) {
-                                "${(downloaded / 1000 / elapsed)} KB/s"
-                            } else "0 KB/s"
                             onProgress(Progress(percent, speed))
+                        } else {
+                            onProgress(Progress(-1, "${com.redt.util.Format.size(downloaded)} - $speed"))
                         }
                     }
                 }
@@ -309,6 +372,8 @@ class DistroInstaller(private val context: Context) {
         pb.redirectErrorStream(true)
         val process = pb.start()
         try {
+            var streamCompleted = false
+            var entryCount = 0
             process.inputStream.use { input ->
                 val counter = CountingInputStream(input)
                 BufferedInputStream(counter, 65536).use { bis ->
@@ -317,13 +382,17 @@ class DistroInstaller(private val context: Context) {
                         // stream we can observe here is the *decompressed* output, so
                         // fall back to a rough 3:1 ratio (xz typically achieves 3-5:1).
                         val approxDecompressedTotal = tarball.length() * 3L
-                        extractTarEntries(tarIn, dest, approxDecompressedTotal, onProgress) { counter.bytesRead }
+                        entryCount = extractTarEntries(tarIn, dest, approxDecompressedTotal, onProgress) { counter.bytesRead }
                     }
                 }
+                streamCompleted = true
             }
             val exitCode = process.waitFor()
-            if (exitCode != 0) {
+            if (exitCode != 0 && (!streamCompleted || entryCount == 0)) {
                 throw Exception("Native xz decompressor failed (exit $exitCode), falling back")
+            }
+            if (exitCode != 0) {
+                Log.w("DistroInstaller", "xz exited with $exitCode after valid output; continuing")
             }
         } catch (e: CancelledException) {
             killProcess(process)
@@ -413,7 +482,7 @@ class DistroInstaller(private val context: Context) {
         totalForProgress: Long,
         onProgress: (Progress) -> Unit,
         bytesReadProvider: () -> Long
-    ) {
+    ): Int {
         val firstEntry = tarIn.getNextEntry()
         var prefixToStrip = ""
         if (firstEntry != null) {
@@ -475,23 +544,53 @@ class DistroInstaller(private val context: Context) {
                 target.setWritable(true, false)
             }
         }
-        if (firstEntry != null) processEntry(firstEntry)
+        var count = 0
+        if (firstEntry != null) {
+            processEntry(firstEntry)
+            count++
+        }
         var entry: org.apache.commons.compress.archivers.tar.TarArchiveEntry? = tarIn.getNextEntry()
         while (entry != null) {
             checkCancel()
             processEntry(entry)
+            count++
             val pct = if (totalForProgress > 0) {
                 ((bytesReadProvider() * 100L) / totalForProgress).toInt().coerceIn(0, 99)
             } else 0
             onProgress(Progress(pct, "Extracting"))
             entry = tarIn.getNextEntry()
         }
+        return count
     }
 
     private fun writeResolvConf(rootfs: File) {
         val resolv = File(rootfs, "etc/resolv.conf")
+        if (resolv.exists() && resolv.length() > 0L) return
         resolv.parentFile?.mkdirs()
-        safeWriteText(resolv, "nameserver 8.8.8.8\n")
+        safeWriteText(resolv, systemDnsServers().joinToString("") { "nameserver $it\n" })
+    }
+
+    private fun systemDnsServers(): List<String> {
+        try {
+            val cm = context.getSystemService(android.content.ConnectivityManager::class.java)
+            val network = cm?.activeNetwork
+            if (network != null) {
+                val dns = cm.getLinkProperties(network)?.dnsServers
+                    ?.filter { !it.isAnyLocalAddress && !it.isLoopbackAddress }
+                    ?.map { it.hostAddress }
+                    ?.filter { !it.isNullOrEmpty() }
+                if (!dns.isNullOrEmpty()) return dns
+            }
+        } catch (_: Exception) {}
+        val hostResolv = try {
+            File("/etc/resolv.conf").readLines().mapNotNull { line ->
+                line.trim().removePrefix("nameserver").trim()
+                    .takeIf { it.isNotEmpty() && it != "0.0.0.0" && it != "::" }
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+        return hostResolv.ifEmpty { listOf("8.8.8.8") }
     }
 
     private fun ensureCaCertificates(rootfs: File): String? {
@@ -549,33 +648,43 @@ class DistroInstaller(private val context: Context) {
         val group = File(rootfs, "etc/group")
         group.parentFile?.mkdirs()
         val existing = if (group.exists()) group.readText() else ""
+        val existingNames = existing.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !it.startsWith('#') }
+            .map { it.substringBefore(':') }
+            .toMutableSet()
         val sb = StringBuilder(existing)
+        var changed = false
         val baseEntries = listOf(
             "root:x:0:root", "wheel:x:0:root",
             "inet:x:3003:", "everybody:x:9997:"
         )
         for (entry in baseEntries) {
             val name = entry.substringBefore(':')
-            if (!existing.contains(":$name")) {
+            if (existingNames.add(name)) {
                 if (sb.isNotEmpty() && !sb.endsWith('\n')) sb.append('\n')
                 sb.append(entry).append('\n')
+                changed = true
             }
         }
         try {
             val status = java.io.File("/proc/self/status").readLines()
-            val groupsLine = status.firstOrNull { it.startsWith("Groups:") } ?: return
-            val gids = groupsLine.removePrefix("Groups:").trim().split("\\s+".toRegex())
-            for (gidStr in gids) {
-                val gid = gidStr.toIntOrNull() ?: continue
-                if (gid <= 0) continue
-                val name = "android_$gid"
-                if (!existing.contains(":$name:")) {
-                    if (!sb.endsWith('\n')) sb.append('\n')
-                    sb.append("$name:x:$gid:\n")
+            val groupsLine = status.firstOrNull { it.startsWith("Groups:") }
+            if (groupsLine != null) {
+                val gids = groupsLine.removePrefix("Groups:").trim().split("\\s+".toRegex())
+                for (gidStr in gids) {
+                    val gid = gidStr.toIntOrNull() ?: continue
+                    if (gid <= 0) continue
+                    val name = "android_$gid"
+                    if (existingNames.add(name)) {
+                        if (sb.isNotEmpty() && !sb.endsWith('\n')) sb.append('\n')
+                        sb.append("$name:x:$gid:\n")
+                        changed = true
+                    }
                 }
             }
         } catch (_: Exception) {}
-        safeWriteText(group, sb.toString())
+        if (changed) safeWriteText(group, sb.toString())
     }
 
     private fun ensureWritable(file: File) {
@@ -593,7 +702,8 @@ class DistroInstaller(private val context: Context) {
         file.appendText(text)
     }
 
-    private fun setupRootfs(rootfs: File) {
+    private suspend fun setupRootfs(rootfs: File) {
+        migrateNestedRootfs(rootfs)
         val uid = android.os.Process.myUid()
         val passwd = File(rootfs, "etc/passwd")
         if (!passwd.exists() || !passwd.readText().contains(":$uid:")) {
@@ -614,6 +724,39 @@ class DistroInstaller(private val context: Context) {
         }
         createDeviceNodes(rootfs)
         repairRootfs(rootfs)
+    }
+
+    /**
+     * One-time fixup (install time only): some tarballs wrap the whole rootfs
+     * in a single top-level directory (e.g. <name>-rootfs/). Only migrate when
+     * the root itself has no bin/ layout and exactly one subdirectory holds it.
+     */
+    private suspend fun migrateNestedRootfs(rootfs: File) {
+        if (File(rootfs, "bin").isDirectory) return
+        val subdirs = rootfs.listFiles()?.filter { it.isDirectory } ?: return
+        if (subdirs.size != 1) return
+        val subdir = subdirs.single()
+        if (!File(subdir, "bin").isDirectory) return
+        Log.i("DistroInstaller", "Found nested rootfs in ${subdir.name}/, migrating...")
+        var copyOk = true
+        subdir.listFiles()?.forEach { file ->
+            val dest = File(rootfs, file.name)
+            if (file.isDirectory) {
+                if (!file.copyRecursively(dest, overwrite = true)) copyOk = false
+            } else {
+                try {
+                    file.copyTo(dest, overwrite = true)
+                } catch (_: Exception) {
+                    copyOk = false
+                }
+            }
+        }
+        if (copyOk) {
+            deleteRootfsSafe(subdir)
+            Log.i("DistroInstaller", "Migrated files from ${subdir.name}/ to rootfs")
+        } else {
+            Log.w("DistroInstaller", "WARN: Failed to fully migrate ${subdir.name}/")
+        }
     }
 
     private fun fixupDirectoryPermissions(rootfs: File) {
@@ -653,33 +796,6 @@ class DistroInstaller(private val context: Context) {
         File(rootfs, "root").mkdirs()
         repairs.add("Created /root")
 
-        val subdirs = rootfs.listFiles()?.filter { it.isDirectory && it.name.contains('-') } ?: emptyList()
-        for (subdir in subdirs) {
-            val innerBin = File(subdir, "bin")
-            if (innerBin.exists()) {
-                repairs.add("Found nested rootfs in ${subdir.name}/, migrating...")
-                var copyOk = true
-                subdir.listFiles()?.forEach { file ->
-                    val dest = File(rootfs, file.name)
-                    if (file.isDirectory) {
-                        if (!file.copyRecursively(dest, overwrite = true)) copyOk = false
-                    } else {
-                        try {
-                            file.copyTo(dest, overwrite = true)
-                        } catch (_: Exception) {
-                            copyOk = false
-                        }
-                    }
-                }
-                if (copyOk) {
-                    subdir.deleteRecursively()
-                    repairs.add("Migrated files from ${subdir.name}/ to rootfs")
-                } else {
-                    repairs.add("WARN: Failed to fully migrate ${subdir.name}/")
-                }
-            }
-        }
-
         val busybox = File(rootfs, "bin/busybox")
         if (busybox.exists()) {
             if (!busybox.canExecute()) {
@@ -714,12 +830,9 @@ class DistroInstaller(private val context: Context) {
         }
 
         val resolv = File(rootfs, "etc/resolv.conf")
-        if (!resolv.exists()) {
+        if (!resolv.exists() || resolv.length() == 0L) {
             writeResolvConf(rootfs)
             repairs.add("Created etc/resolv.conf")
-        } else if (!resolv.readText().contains("8.8.8.8")) {
-            writeResolvConf(rootfs)
-            repairs.add("Updated etc/resolv.conf to static DNS")
         }
 
         ensureCaCertificates(rootfs)?.let { repairs.add(it) }
@@ -765,12 +878,13 @@ class DistroInstaller(private val context: Context) {
             ?: emptyList()
     }
 
-    fun uninstall(distroName: String) {
-        val dir = getRootfsDir(distroName)
-        dir.deleteRecursively()
+    suspend fun uninstall(distroName: String) {
+        val validName = validateDistroName(distroName)
+        val dir = getRootfsDir(validName)
+        deleteRootfsSafe(dir)
         com.redt.util.Format.invalidate(dir)
-        File(context.filesDir, "installed/$distroName").delete()
-        File(tarballDir(), "$distroName.tar.xz").delete()
+        File(context.filesDir, "installed/$validName").delete()
+        File(tarballDir(), "$validName.tar.xz").delete()
         notifyDocumentRootsChanged()
     }
 
@@ -793,15 +907,91 @@ class DistroInstaller(private val context: Context) {
             val finished = proc.waitFor(BACKUP_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)
             if (!finished) {
                 killProcess(proc!!)
-                return false
+                Log.w("DistroInstaller", "System tar timed out, falling back to Java backup")
+                backupWithJava(rootfsDir, backupFile)
+            } else {
+                drain.join(2000)
+                if (proc.exitValue() == 0 && backupFile.exists() && backupFile.length() > 0) {
+                    true
+                } else {
+                    Log.w("DistroInstaller", "System tar failed, falling back to Java backup")
+                    backupWithJava(rootfsDir, backupFile)
+                }
             }
-            drain.join(2000)
-            proc.exitValue() == 0 && backupFile.exists() && backupFile.length() > 0
         } catch (_: Exception) {
-            false
+            try {
+                backupWithJava(rootfsDir, backupFile)
+            } catch (e: Exception) {
+                Log.e("DistroInstaller", "Java backup fallback failed", e)
+                false
+            }
         } finally {
             proc?.destroy()
         }
+    }
+
+    private fun backupWithJava(rootfsDir: File, backupFile: File): Boolean {
+        if (backupFile.exists()) backupFile.delete()
+        var ok = false
+        FileOutputStream(backupFile).use { fos ->
+            GzipCompressorOutputStream(fos).use { gz ->
+                TarArchiveOutputStream(gz).use { tar ->
+                    tar.setLongFileMode(TarArchiveOutputStream.LONGFILE_POSIX)
+                    addDirToTar(tar, rootfsDir, rootfsDir.name)
+                }
+            }
+            ok = true
+        }
+        return ok && backupFile.exists() && backupFile.length() > 0
+    }
+
+    private fun addDirToTar(tar: TarArchiveOutputStream, dir: File, entryName: String) {
+        val isLink = try {
+            OsConstants.S_ISLNK(Os.lstat(dir.absolutePath).st_mode)
+        } catch (_: Exception) {
+            false
+        }
+        if (isLink) {
+            val entry = TarArchiveEntry(entryName)
+            try {
+                val target = try { Os.readlink(dir.absolutePath) } catch (_: Exception) { "" }
+                if (target.isNotEmpty()) {
+                    entry.setLinkName(target)
+                    entry.isSymbolicLink = true
+                }
+                tar.putArchiveEntry(entry)
+                tar.closeArchiveEntry()
+            } catch (_: Exception) {}
+            return
+        }
+        if (dir.isFile) {
+            val entry = try { TarArchiveEntry(dir) } catch (_: Exception) { TarArchiveEntry(entryName) }
+            entry.name = entryName
+            tar.putArchiveEntry(entry)
+            FileInputStream(dir).use { it.copyTo(tar) }
+            tar.closeArchiveEntry()
+            return
+        }
+        val dirEntry = TarArchiveEntry(entryName.let { if (it.endsWith("/")) it else "$it/" })
+        dirEntry.isDirectory = true
+        tar.putArchiveEntry(dirEntry)
+        tar.closeArchiveEntry()
+        dir.listFiles()?.sortedBy { it.name }?.forEach { child ->
+            addDirToTar(tar, child, "$entryName/${child.name}")
+        }
+    }
+
+    fun tarballCacheDir(): File = tarballDir()
+
+    fun tarballCacheSize(): Long =
+        com.redt.util.Format.dirSize(tarballDir())
+
+    fun clearTarballCache(): Boolean {
+        var ok = true
+        tarballDir().listFiles()?.forEach {
+            if (it.isFile && !it.delete()) ok = false
+        }
+        return ok
     }
 
     private companion object {

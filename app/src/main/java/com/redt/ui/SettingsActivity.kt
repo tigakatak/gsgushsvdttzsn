@@ -347,6 +347,79 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         versionInfo.text = "${getString(R.string.app_name)} v${BuildConfig.VERSION_NAME}"
+
+        val tarballCacheBtn = findViewById<TextView>(R.id.tarball_cache_btn)
+        fun updateTarballCacheLabel() {
+            lifecycleScope.launch(Dispatchers.IO) {
+                val size = installer.tarballCacheSize()
+                withContext(Dispatchers.Main) {
+                    if (!isFinishing && !isDestroyed) {
+                        tarballCacheBtn.text = if (size > 0) {
+                            "Clear tarball cache (${com.redt.util.Format.size(size)})"
+                        } else {
+                            "Tarball cache (empty)"
+                        }
+                    }
+                }
+            }
+        }
+        updateTarballCacheLabel()
+        tarballCacheBtn.setOnClickListener {
+            AlertDialog.Builder(this)
+                .setTitle("Clear tarball cache")
+                .setMessage("Cached base tarballs are used to reset a distro without re-downloading. Delete them to free space?")
+                .setPositiveButton("Clear") { _, _ ->
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        val ok = installer.clearTarballCache()
+                        withContext(Dispatchers.Main) {
+                            if (!isFinishing && !isDestroyed) {
+                                Toast.makeText(
+                                    this@SettingsActivity,
+                                    if (ok) "Tarball cache cleared" else "Some cached files could not be removed",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                updateTarballCacheLabel()
+                            }
+                        }
+                    }
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
+
+        findViewById<TextView>(R.id.crash_logs_btn).setOnClickListener {
+            val base = getExternalFilesDir(null) ?: filesDir
+            val crashDir = File(base, "crash")
+            val logs = crashDir.listFiles { f -> f.name.startsWith("crash_") }
+                ?.sortedByDescending { it.lastModified() } ?: emptyList()
+            if (logs.isEmpty()) {
+                Toast.makeText(this, "No crash logs", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            AlertDialog.Builder(this)
+                .setTitle("Crash logs")
+                .setItems(logs.map { it.name }.toTypedArray()) { _, which ->
+                    shareCrashLog(logs[which])
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
+    }
+
+    private fun shareCrashLog(file: File) {
+        try {
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                this, "$packageName.fileprovider", file
+            )
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(intent, "Share crash log"))
+        } catch (e: Exception) {
+            Toast.makeText(this, "Cannot share crash log: ${e.message}", Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun restoreDistro(backupFile: java.io.File, distroName: String, rootfsDir: java.io.File) {
@@ -363,7 +436,7 @@ class SettingsActivity : AppCompatActivity() {
             try {
                 withContext(Dispatchers.IO) {
                     if (isBackup) {
-                        rootfsDir.deleteRecursively()
+                        installer.deleteRootfsSafe(rootfsDir)
                         rootfsDir.mkdirs()
                         val pb = ProcessBuilder(
                             "tar", "-xzf", backupFile.absolutePath, "-C", rootfsDir.absolutePath

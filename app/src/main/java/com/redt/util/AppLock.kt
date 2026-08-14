@@ -127,7 +127,6 @@ object AppLock {
             .setView(layout)
             .setPositiveButton("Save", null)
             .setNegativeButton("Cancel") { _, _ ->
-                prefs.edit().putBoolean(Prefs.KEY_LOCK_ENABLED, false).apply()
                 onSaved()
             }
             .create()
