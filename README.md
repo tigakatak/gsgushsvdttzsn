@@ -12,7 +12,7 @@
 - [Third-party notices](NOTICE.md)
 - [Authors](AUTHORS.md)
 
-A terminal emulator for Android that runs Linux distributions (Alpine, Debian, Ubuntu, Fedora, Void, Arch, Manjaro, Rocky, AlmaLinux, Artix, Kali) via **proot** — no root required.
+A terminal emulator for Android that runs Linux distributions (Alpine, Debian, Ubuntu, Fedora, Arch, Manjaro, Rocky, AlmaLinux, Artix) via **proot** — no root required.
 
 ## Features
 
@@ -68,11 +68,9 @@ Pre-built binaries for `arm64-v8a` are included in the repo (ARM64-only).
 | Alpine | Working | apk | `apk add nano wget sudo bash openssl` |
 | Debian | Working | apt | `apt-get install nano wget sudo bash openssl` |
 | Ubuntu | Working | apt | Same as Debian |
-| Kali | Working | apt | Same as Debian |
 | Fedora | Working | dnf | `dnf install nano wget sudo bash openssl` |
 | Rocky | Working | dnf | Same as Fedora |
 | AlmaLinux | Working | dnf | Same as Fedora |
-| Void   | Working | xbps | `xbps-install -S nano wget sudo bash openssl` |
 | Arch   | Working | pacman | `pacman -Syy` + `pacman -S --needed glibc gcc-libs nano wget sudo bash openssl` |
 | Artix  | Working | pacman | Same as Arch |
 | Manjaro | Working | pacman | `pacman -Syy` + `pacman -S nano wget sudo bash openssl` |
@@ -119,13 +117,11 @@ When you open RedT for the first time you will see:
    - Debian (stable, widely compatible)
    - Ubuntu (user-friendly)
    - Fedora (modern, latest packages)
-   - Void Linux (minimal, runit init)
    - Arch Linux (rolling release, latest packages)
    - Manjaro (user-friendly Arch-based)
    - Rocky Linux (RHEL-compatible enterprise)
    - AlmaLinux (stable RHEL-compatible)
    - Artix Linux (Arch without systemd)
-   - Kali Linux (penetration testing)
 3. **Tap a distro** to select it
 4. Tap **"Download & Install"**
 5. The app will:

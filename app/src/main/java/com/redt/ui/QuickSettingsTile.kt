@@ -25,7 +25,7 @@ class QuickSettingsTile : TileService() {
             val prefs = prefs()
             val last = prefs.getString(Prefs.KEY_LAST_DISTRO, null)
             val distros = DistroInstaller(this).getInstalledDistros()
-            val distro = last ?: distros.firstOrNull()
+            val distro = distros.firstOrNull { it == last } ?: distros.firstOrNull()
             if (distro != null) {
                 TerminalActivity.launch(this, distro)
             } else {

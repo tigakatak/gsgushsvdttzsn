@@ -16,6 +16,10 @@ object AppLock {
     @Volatile
     private var unlockedAt = 0L
 
+    // Prevent stacked unlock dialogs when several activities call
+    // requireUnlock from onResume in quick succession.
+    private var dialogShowing = false
+
     fun isUnlocked(prefs: SharedPreferences): Boolean {
         if (!prefs.getBoolean(Prefs.KEY_LOCK_ENABLED, false)) return true
         return System.currentTimeMillis() - unlockedAt < Prefs.UNLOCK_WINDOW_MS
@@ -53,6 +57,8 @@ object AppLock {
             onDone()
             return
         }
+        if (dialogShowing) return
+        dialogShowing = true
         showUnlockDialog(activity, prefs, onDone)
     }
 
@@ -75,6 +81,7 @@ object AppLock {
             .setPositiveButton("Unlock", null)
             .setNegativeButton("Cancel") { _, _ -> activity.finish() }
             .create()
+        dialog.setOnDismissListener { dialogShowing = false }
         dialog.show()
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
             if (verifyPin(input.text.toString(), prefs)) {

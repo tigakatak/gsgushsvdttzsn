@@ -88,9 +88,6 @@ class TerminalBackend(
         view.setTextSize(clamped)
     }
 
-    val currentFontSize: Int
-        get() = fontSize.roundToInt()
-
     override fun onSingleTapUp(e: MotionEvent) {
         val session = view.mTermSession
         if (session != null && !view.isSelectingText) {

@@ -163,6 +163,10 @@ class MainActivity : AppCompatActivity() {
                 lifecycleScope.launch(Dispatchers.IO) {
                     val ok = try {
                         installer.resetToDefault(name) { }
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        // Activity teardown: let the coroutine die quietly instead
+                        // of reporting a spurious failure toast.
+                        throw e
                     } catch (e: Exception) {
                         false
                     }
@@ -219,6 +223,6 @@ class MainActivity : AppCompatActivity() {
             AppTheme.apply(this)
         }
         lastAppliedTheme = current
-        populateDistroList()
+        com.redt.util.AppLock.requireUnlock(this, prefs()) { populateDistroList() }
     }
 }

@@ -12,10 +12,10 @@ object DistroRegistry {
         ),
         Distro(
             name = "alpine",
-            displayName = "Alpine Linux",
+            displayName = "Alpine Linux 3.24.1",
             description = "Minimal (~5MB), fast, security-focused. Recommended for low disk space.",
-            baseUrl = "https://github.com/termux/proot-distro/releases/download/v4.6.0/alpine-{arch}-pd-v4.6.0.tar.xz",
-            sha256 = "bffe6373dea84dce6a25c94f225ccdaec96c825710d655aa1f4cae79333edea6",
+            baseUrl = "https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/aarch64/alpine-minirootfs-3.24.1-aarch64.tar.gz",
+            sha256 = "f55a90f69052c5bd6f92cb09a8f47065970830b194c917a006fb94028e721259",
             packageManager = "apk"
         ),
         Distro(
@@ -51,15 +51,6 @@ object DistroRegistry {
             packageManager = "dnf"
         ),
         Distro(
-            name = "kali",
-            displayName = "Kali Linux",
-            description = "Penetration testing and security research.",
-            baseUrl = "https://kali.download/nethunter-images/current/rootfs/kali-nethunter-rootfs-minimal-{arch}.tar.xz",
-            sha256 = "d6403a5da175df325611d23af4b92330856059c45454eced7f4cdf3ca6df2e4e",
-            packageManager = "apt",
-            urlArch = "arm64"
-        ),
-        Distro(
             name = "manjaro",
             displayName = "Manjaro",
             description = "User-friendly Arch-based rolling release. 64-bit ARM only.",
@@ -83,13 +74,5 @@ object DistroRegistry {
             sha256 = "a8883244a7031559a2bd8dc16b7d8afc947930b611819d8a28a09545097a6ba5",
             packageManager = "apt"
         ),
-        Distro(
-            name = "void",
-            displayName = "Void Linux",
-            description = "Rolling release, fast package manager.",
-            baseUrl = "https://easycli.sh/proot-distro/void-{arch}-pd-v4.29.0.tar.xz",
-            sha256 = "7a7c449b3efe504749e40f556d13812010bccc930a820a56973a0f5fc2f16997",
-            packageManager = "xbps"
-        )
     )
 }

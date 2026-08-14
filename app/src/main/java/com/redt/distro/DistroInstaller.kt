@@ -45,7 +45,7 @@ class DistroInstaller(private val context: Context) {
             }
             rootfsDir.mkdirs()
 
-            val tarball = File(tarballDir(), "${distro.name}.tar.xz")
+            val tarball = cachedTarballFile(distro)
             if (tarball.exists()) tarball.delete()
             val tarballUrl = distro.tarballUrl()
             Log.i("DistroInstaller", "Downloading $tarballUrl")
@@ -128,6 +128,18 @@ class DistroInstaller(private val context: Context) {
     private fun tarballDir(): File =
         File(context.filesDir, "tarballs").apply { mkdirs() }
 
+    private fun cachedTarballName(distro: Distro): String {
+        val url = distro.tarballUrl()
+        return when {
+            url.endsWith(".tar.xz", true) -> "${distro.name}.tar.xz"
+            url.endsWith(".tar.gz", true) -> "${distro.name}.tar.gz"
+            else -> "${distro.name}.tar"
+        }
+    }
+
+    private fun cachedTarballFile(distro: Distro): File =
+        File(tarballDir(), cachedTarballName(distro))
+
     /**
      * Restores a distro to its freshly extracted state: wipes installed
      * packages, caches and shell configs. Uses the cached base tarball when
@@ -148,7 +160,7 @@ class DistroInstaller(private val context: Context) {
             }
             rootfsDir.mkdirs()
 
-            val tarball = File(tarballDir(), "$distroName.tar.xz")
+            val tarball = cachedTarballFile(distro)
             if (!tarball.exists()) {
                 install(distro, onProgress)
                 return@withContext true
@@ -244,7 +256,10 @@ class DistroInstaller(private val context: Context) {
             com.redt.util.Format.invalidate(dir)
         } catch (_: Exception) {}
         try {
-            File(tarballDir(), "$distroName.tar.xz").delete()
+            val distro = DistroRegistry.allDistros.firstOrNull { it.name == distroName }
+            val cached = if (distro != null) cachedTarballFile(distro)
+            else File(tarballDir(), "$distroName.tar.xz")
+            cached.delete()
         } catch (_: Exception) {}
         try {
             File(context.filesDir, "installed/$distroName").delete()
@@ -348,6 +363,10 @@ class DistroInstaller(private val context: Context) {
         dest: File,
         onProgress: (Progress) -> Unit
     ) = withContext(Dispatchers.IO) {
+        if (tarball.name.endsWith(".tar.gz", true)) {
+            extractWithJavaGz(tarball, dest, onProgress)
+            return@withContext
+        }
         val nativeXz = getNativeXz()
         if (nativeXz != null) {
             try {
@@ -493,27 +512,41 @@ class DistroInstaller(private val context: Context) {
                 Log.i("DistroInstaller", "Stripping prefix: $prefixToStrip")
             }
         }
-        fun processEntry(entry: org.apache.commons.compress.archivers.tar.TarArchiveEntry) {
-            var entryName = entry.name
-            if (prefixToStrip.isNotEmpty() && entryName.startsWith(prefixToStrip)) {
-                entryName = entryName.removePrefix(prefixToStrip)
+        val canonicalDest = dest.canonicalFile
+
+        fun isInsideDest(f: File): Boolean =
+            f.path.startsWith(canonicalDest.path + File.separator)
+
+        fun stripPrefix(name: String): String =
+            if (prefixToStrip.isNotEmpty() && name.startsWith(prefixToStrip)) {
+                name.removePrefix(prefixToStrip)
+            } else {
+                name
             }
-            if (entryName.isEmpty()) return
-            val canonicalDest = dest.canonicalFile
+
+        fun processEntry(entry: org.apache.commons.compress.archivers.tar.TarArchiveEntry) {
+            val entryName = stripPrefix(entry.name)
+            // Root-dir marker entries ("./", ".") carry no content and resolve
+            // to the destination itself; skip them instead of rejecting them
+            // as "unsafe".
+            if (entryName.isEmpty() || entryName == "." || entryName == "./") return
             val target = File(dest, entryName).canonicalFile
-            val isInsideDestination = target != canonicalDest &&
-                target.path.startsWith(canonicalDest.path + File.separator)
-            if (!isInsideDestination) {
+            if (target == canonicalDest || !isInsideDest(target)) {
                 throw Exception("Unsafe archive entry: ${entry.name}")
             }
             if (entry.isSymbolicLink) {
                 val linkTarget = entry.linkName
                 try {
-                    val canonicalTarget = target.parentFile?.canonicalFile
-                    val resolvedTarget = canonicalTarget?.resolve(linkTarget)?.canonicalFile
-                    val isSafe = resolvedTarget != null &&
-                        (resolvedTarget == canonicalDest ||
-                         resolvedTarget.path.startsWith(canonicalDest.path + File.separator))
+                    // Absolute link targets are relative to the *guest* root
+                    // (e.g. bin/arch -> /bin/busybox), not to the host filesystem.
+                    // File.resolve() returns absolute children unchanged, so they
+                    // must be joined under the rootfs manually.
+                    val resolvedTarget = if (linkTarget.startsWith("/")) {
+                        File(canonicalDest, linkTarget.substring(1)).canonicalFile
+                    } else {
+                        target.parentFile?.canonicalFile?.resolve(linkTarget)?.canonicalFile
+                    }
+                    val isSafe = resolvedTarget != null && isInsideDest(resolvedTarget)
                     if (!isSafe) {
                         Log.w("DistroInstaller", "Skipping unsafe symlink ${entry.name} -> $linkTarget")
                     } else {
@@ -523,6 +556,23 @@ class DistroInstaller(private val context: Context) {
                     }
                 } catch (e: Exception) {
                     Log.w("DistroInstaller", "Symlink failed ${entry.name}: ${e.message}")
+                }
+            } else if (entry.isLink) {
+                // Hard link: payload lives at linkName, extracted earlier in
+                // this archive. Falling back to a copy keeps the content even
+                // on filesystems where link(2) fails.
+                val linkTarget = stripPrefix(entry.linkName)
+                val source = if (linkTarget.isEmpty()) null else File(dest, linkTarget).canonicalFile
+                if (source == null || !isInsideDest(source) || !source.isFile) {
+                    Log.w("DistroInstaller", "Skipping hard link ${entry.name} -> ${entry.linkName}")
+                } else {
+                    target.parentFile?.mkdirs()
+                    target.delete()
+                    try {
+                        android.system.Os.link(source.absolutePath, target.absolutePath)
+                    } catch (e: Exception) {
+                        source.copyTo(target, overwrite = true)
+                    }
                 }
             } else if (entry.isDirectory) {
                 target.mkdirs()
@@ -563,10 +613,20 @@ class DistroInstaller(private val context: Context) {
         return count
     }
 
+    private fun isSymbolicLink(f: File): Boolean = try {
+        OsConstants.S_ISLNK(Os.lstat(f.absolutePath).st_mode)
+    } catch (_: Exception) {
+        false
+    }
+
     private fun writeResolvConf(rootfs: File) {
         val resolv = File(rootfs, "etc/resolv.conf")
         if (resolv.exists() && resolv.length() > 0L) return
         resolv.parentFile?.mkdirs()
+        // A dangling symlink (e.g. -> /run/resolvconf/resolv.conf) reports
+        // exists() == false; remove the link itself so writeText below cannot
+        // follow it out of the rootfs.
+        if (isSymbolicLink(resolv)) resolv.delete()
         safeWriteText(resolv, systemDnsServers().joinToString("") { "nameserver $it\n" })
     }
 
@@ -884,7 +944,10 @@ class DistroInstaller(private val context: Context) {
         deleteRootfsSafe(dir)
         com.redt.util.Format.invalidate(dir)
         File(context.filesDir, "installed/$validName").delete()
-        File(tarballDir(), "$validName.tar.xz").delete()
+        val distro = DistroRegistry.allDistros.firstOrNull { it.name == validName }
+        val cached = if (distro != null) cachedTarballFile(distro)
+        else File(tarballDir(), "$validName.tar.xz")
+        cached.delete()
         notifyDocumentRootsChanged()
     }
 
@@ -978,8 +1041,6 @@ class DistroInstaller(private val context: Context) {
             addDirToTar(tar, child, "$entryName/${child.name}")
         }
     }
-
-    fun tarballCacheDir(): File = tarballDir()
 
     fun tarballCacheSize(): Long =
         com.redt.util.Format.dirSize(tarballDir())

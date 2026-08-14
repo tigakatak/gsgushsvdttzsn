@@ -686,6 +686,7 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        com.redt.util.AppLock.requireUnlock(this, prefs()) {}
         populateDistroList()
         findViewById<TextView>(R.id.battery_opt_btn)?.let { updateBatteryOptimizationLabel(it) }
     }

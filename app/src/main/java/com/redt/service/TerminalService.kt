@@ -10,7 +10,7 @@ import android.os.PowerManager
 import android.util.Log
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
-import com.redt.R
+import com.redt.distro.DistroInstaller
 import com.redt.RedTApp
 import com.redt.proot.ProotInstaller
 import com.redt.ui.AppTheme
@@ -45,9 +45,13 @@ class TerminalService : Service() {
             PendingIntent.getActivity(
                 context, 0,
                 Intent(context, TerminalActivity::class.java).apply {
-                    context.prefs().getString(Prefs.KEY_LAST_DISTRO, null)?.let {
-                        putExtra(TerminalActivity.EXTRA_DISTRO, it)
-                    }
+                    // Fall back to an installed distro when the last-used one
+                    // has been removed, so the notification never opens the
+                    // terminal with an invalid distro name.
+                    val installed = DistroInstaller(context).getInstalledDistros()
+                    val last = context.prefs().getString(Prefs.KEY_LAST_DISTRO, null)
+                    val distro = installed.firstOrNull { it == last } ?: installed.firstOrNull()
+                    distro?.let { putExtra(TerminalActivity.EXTRA_DISTRO, it) }
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
                 },
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -101,11 +105,13 @@ class TerminalService : Service() {
                 userWakelockHeld = true
                 prefs().edit().putBoolean(Prefs.KEY_WAKELOCK, true).apply()
                 updateWakeLock()
+                stopIfIdle()
             }
             ACTION_RELEASE -> {
                 userWakelockHeld = false
                 prefs().edit().putBoolean(Prefs.KEY_WAKELOCK, false).apply()
                 updateWakeLock()
+                stopIfIdle()
             }
             ACTION_AUTO_WAKE -> {
                 autoWakelockHeld = true
@@ -116,7 +122,8 @@ class TerminalService : Service() {
                 updateWakeLock()
             }
             ACTION_CREATE_SESSION -> {
-                intent.getStringExtra(EXTRA_DISTRO)?.let(::createSession)
+                val distro = intent.getStringExtra(EXTRA_DISTRO)
+                if (distro != null) createSession(distro) else stopIfIdle()
             }
             ACTION_EXIT -> {
                 exiting = true
@@ -155,9 +162,17 @@ class TerminalService : Service() {
                 "proot binary not found. Please reinstall RedT.",
                 Toast.LENGTH_LONG,
             ).show()
+            stopIfIdle()
             return
         }
-        if (!pendingDistros.add(distroName)) return
+        if (!pendingDistros.add(distroName)) {
+            Toast.makeText(
+                this,
+                "A session for $distroName is already starting",
+                Toast.LENGTH_SHORT,
+            ).show()
+            return
+        }
         serviceScope.launch {
             var launchScript: File? = null
             try {
@@ -195,10 +210,7 @@ class TerminalService : Service() {
                 ).show()
             } finally {
                 pendingDistros.remove(distroName)
-                if (sessionStore.sessions.value.isEmpty()) {
-                    stopForeground(STOP_FOREGROUND_REMOVE)
-                    stopSelf()
-                }
+                stopIfIdle()
             }
         }
     }
@@ -239,8 +251,18 @@ class TerminalService : Service() {
             ?.notify(RedTApp.NOTIF_ID_TERMINAL, buildNotification())
     }
 
+    private fun stopIfIdle() {
+        if (sessionStore.sessions.value.isEmpty()) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
+    }
+
     private fun updateWakeLock() {
-        val shouldHold = userWakelockHeld || autoWakelockHeld
+        // The user pref is the master switch: with wakelock disabled, neither
+        // the manual toggle nor the background auto-wakelock may hold one.
+        val enabled = prefs().getBoolean(Prefs.KEY_WAKELOCK, Prefs.WAKELOCK_DEFAULT)
+        val shouldHold = enabled && (userWakelockHeld || autoWakelockHeld)
         if (shouldHold && wakeLock?.isHeld != true) {
             acquireWakeLock()
         } else if (!shouldHold && wakeLock?.isHeld == true) {

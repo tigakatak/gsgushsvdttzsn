@@ -237,6 +237,8 @@ class TerminalActivity : AppCompatActivity() {
             wireBackend(it)
         }
 
+    private var sawActiveSession = false
+
     private fun observeSessions() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -251,9 +253,17 @@ class TerminalActivity : AppCompatActivity() {
                     }
                     active.forEach { sessionStore.attachClient(it, backend) }
                     if (active.isEmpty()) {
+                        // The session list can only become empty after the store
+                        // previously held sessions (the very first emission is
+                        // empty too). onSessionFinished races with the store
+                        // update, so decide navigation here, not in the callback.
+                        if (sawActiveSession) {
+                            navigateToMainMenu()
+                        }
                         updateDrawer()
                         return@collect
                     }
+                    sawActiveSession = true
                     val safeIndex = index.coerceIn(active.indices)
                     if (terminalView.mTermSession !== active[safeIndex]) {
                         terminalView.attachSession(active[safeIndex])
@@ -523,9 +533,10 @@ class TerminalActivity : AppCompatActivity() {
         updateDrawer()
     }
     private fun handleSessionFinished(finishedSession: TerminalSession) {
-        if (sessions.isEmpty()) {
-            navigateToMainMenu()
-        } else {
+        // Navigation on the last session finishing is handled by the
+        // observeSessions() collector (the store update races with this
+        // callback), so only the view attachment is dealt with here.
+        if (sessions.isNotEmpty()) {
             if (terminalView.mTermSession === finishedSession) {
                 val safeIdx = currentIndex.coerceIn(0, sessions.lastIndex)
                 terminalView.attachSession(sessions[safeIdx])
@@ -730,6 +741,7 @@ class TerminalActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        com.redt.util.AppLock.requireUnlock(this, prefs()) {}
         val currentTheme = prefs().getString(Prefs.KEY_THEME, "amoled")
         if (lastAppliedTheme != null && lastAppliedTheme != currentTheme) {
             applyTheme()
