@@ -192,7 +192,7 @@ alias mv='mv -i'
             val startup = File(rootDir, ".startup")
             val startupScript = """if [ ! -f /root/.init_done ] || ! command -v nano >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1; then
     echo '>>> First-time distro setup...'
-    if $update 2>/root/.setup_error.log && ${prereqCmd}$install $quiet nano wget sudo bash openssl ca-certificates 2>>/root/.setup_error.log; then
+    if $update 2>/root/.setup_error.log && ${prereqCmd}$install $quiet nano wget bash openssl ca-certificates 2>>/root/.setup_error.log; then
         if command -v nano >/dev/null 2>&1 && command -v openssl >/dev/null 2>&1; then
             touch /root/.init_done
             echo '>>> Setup complete.'
@@ -203,7 +203,7 @@ alias mv='mv -i'
     else
         echo '>>> Setup was interrupted or failed - starting a repair shell.'
         echo '>>> Details: /root/.setup_error.log'
-        echo ">>> Run manually: $update && ${prereqCmd}$install $quiet nano wget sudo bash openssl ca-certificates"
+        echo ">>> Run manually: $update && ${prereqCmd}$install $quiet nano wget bash openssl ca-certificates"
     fi
 fi
 if command -v bash >/dev/null 2>&1; then
