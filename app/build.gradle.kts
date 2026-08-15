@@ -27,10 +27,20 @@ android {
             storeFile = file("redt-release.jks")
             storePassword = System.getenv("KEYSTORE_PASSWORD")
             keyAlias = System.getenv("KEY_ALIAS")
-            // keytool's default key password equals the store password;
-            // fall back so an unset/empty KEY_PASSWORD still signs correctly.
-            keyPassword = System.getenv("KEY_PASSWORD")?.takeIf { it.isNotEmpty() }
-                ?: System.getenv("KEYSTORE_PASSWORD")
+            // JKS keystores may carry a key password distinct from the store
+            // password; PKCS12 (keytool default since JDK 9) mandates they are
+            // equal, and apksigner rejects a mismatched key password with
+            // "Given final block not properly padded". Detect the format via
+            // the magic bytes and pick the key password accordingly.
+            val isJks = runCatching {
+                java.io.DataInputStream(storeFile.inputStream().buffered()).use { it.readInt() }
+            }.getOrDefault(0) == 0xFEEDFEED.toInt()
+            keyPassword = if (isJks) {
+                System.getenv("KEY_PASSWORD")?.takeIf { it.isNotEmpty() }
+                    ?: System.getenv("KEYSTORE_PASSWORD")
+            } else {
+                System.getenv("KEYSTORE_PASSWORD")
+            }
             enableV1Signing = true
             enableV2Signing = true
             enableV3Signing = true
