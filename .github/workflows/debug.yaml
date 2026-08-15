@@ -1,6 +1,0 @@
-- name: Debug check
-  run: |
-    echo "Alias set: ${ALIAS:+yes}"
-    echo "Keypass set: ${KEYPASS:+yes}"
-    echo "Storepass set: ${STOREPASS:+yes}"
-    echo "Has key: $HAS_KEY"
