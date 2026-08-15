@@ -27,7 +27,10 @@ android {
             storeFile = file("redt-release.jks")
             storePassword = System.getenv("STOREPASS")
             keyAlias = System.getenv("ALIAS")
-            keyPassword = System.getenv("KEYPASS")
+            // keytool's default key password equals the store password;
+            // fall back so an unset/empty KEYPASS still signs correctly.
+            keyPassword = System.getenv("KEYPASS")?.takeIf { it.isNotEmpty() }
+                ?: System.getenv("STOREPASS")
             enableV1Signing = true
             enableV2Signing = true
             enableV3Signing = true
