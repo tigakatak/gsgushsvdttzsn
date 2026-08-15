@@ -620,30 +620,47 @@ class DistroInstaller(private val context: Context) {
     }
 
     /**
-     * True when [resolv] already points at a real upstream nameserver.
-     * Distro images often ship the systemd-resolved stub (nameserver
-     * 127.0.0.53) or a symlink to /run/...: inside proot nothing listens on
-     * 127.0.0.53, so DNS silently breaks. Treat loopback-only files as
-     * unusable and rewrite them with the host's real DNS servers.
+     * True for addresses in 198.18.0.0/15 (RFC 2544 benchmarking range).
+     * Android VPN/firewall apps (NetGuard, Blokada, ...) inject a fake DNS
+     * from this range into the active network; it only works while their
+     * tunnel is up, so it must never leak into the guest resolv.conf.
      */
-    private fun hasUsableNameserver(resolv: File): Boolean {
-        return try {
-            resolv.readLines().any { line ->
+    private fun isBenchmarkRangeDns(addr: String): Boolean {
+        val octets = addr.split('.')
+        if (octets.size != 4) return false
+        val first = octets[0].toIntOrNull() ?: return false
+        val second = octets[1].toIntOrNull() ?: return false
+        return first == 198 && (second == 18 || second == 19)
+    }
+
+    private fun isUsableNameserver(addr: String): Boolean =
+        addr.isNotEmpty() &&
+            !addr.startsWith("127.") &&
+            addr != "::1" && addr != "::" && addr != "0.0.0.0" &&
+            !isBenchmarkRangeDns(addr)
+
+    /**
+     * True when [resolv] must be rewritten: empty or dangling, loopback-only
+     * (systemd-resolved stub ships 127.0.0.53), or containing VPN/benchmark
+     * nameservers that should be purged.
+     */
+    private fun needsResolvRewrite(resolv: File): Boolean {
+        val nameservers = try {
+            resolv.readLines().mapNotNull { line ->
                 val trimmed = line.trim()
-                if (!trimmed.startsWith("nameserver")) return@any false
-                val addr = trimmed.removePrefix("nameserver").trim()
-                addr.isNotEmpty() &&
-                    !addr.startsWith("127.") &&
-                    addr != "::1" && addr != "::" && addr != "0.0.0.0"
+                if (trimmed.startsWith("nameserver")) trimmed.removePrefix("nameserver").trim() else null
             }
         } catch (_: Exception) {
-            false
+            return true
         }
+        if (nameservers.isEmpty()) return true
+        if (nameservers.any { isBenchmarkRangeDns(it) }) return true
+        return nameservers.none { isUsableNameserver(it) }
     }
 
     private fun writeResolvConf(rootfs: File) {
         val resolv = File(rootfs, "etc/resolv.conf")
-        if (hasUsableNameserver(resolv)) return
+        if (!needsResolvRewrite(resolv)) return
         resolv.parentFile?.mkdirs()
         // A symlink (e.g. -> /run/resolvconf/resolv.conf) must be removed
         // first so writeText below cannot follow it out of the rootfs.
@@ -660,13 +677,14 @@ class DistroInstaller(private val context: Context) {
                     ?.filter { !it.isAnyLocalAddress && !it.isLoopbackAddress }
                     ?.map { it.hostAddress }
                     ?.filter { !it.isNullOrEmpty() }
+                    ?.filterNot { isBenchmarkRangeDns(it) }
                 if (!dns.isNullOrEmpty()) return dns
             }
         } catch (_: Exception) {}
         val hostResolv = try {
             File("/etc/resolv.conf").readLines().mapNotNull { line ->
                 line.trim().removePrefix("nameserver").trim()
-                    .takeIf { it.isNotEmpty() && it != "0.0.0.0" && it != "::" }
+                    .takeIf { isUsableNameserver(it) }
             }
         } catch (_: Exception) {
             emptyList()
@@ -911,7 +929,7 @@ class DistroInstaller(private val context: Context) {
         }
 
         val resolv = File(rootfs, "etc/resolv.conf")
-        if (!hasUsableNameserver(resolv)) {
+        if (needsResolvRewrite(resolv)) {
             writeResolvConf(rootfs)
             repairs.add("Created etc/resolv.conf")
         }
