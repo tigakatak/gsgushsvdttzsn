@@ -1,4 +1,4 @@
-name: Verify Signing Key
+name: Release
 
 on:
   workflow_dispatch:
@@ -11,45 +11,39 @@ env:
   HAS_KEY: ${{ secrets.KEYSTORE_BASE64 != '' }}
 
 jobs:
-  verify:
+  release:
     runs-on: ubuntu-latest
     steps:
-      - name: Check secrets exist
-        run: |
-          echo "Alias set: ${ALIAS:+yes}"
-          echo "Keypass set: ${KEYPASS:+yes}"
-          echo "Storepass set: ${STOREPASS:+yes}"
-          echo "Has key: $HAS_KEY"
+      - uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        if: env.HAS_KEY == 'true'
         uses: actions/setup-java@v5.6.0
         with:
           java-version: "17"
           distribution: temurin
 
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install NDK 29 and CMake
+        run: sdkmanager "ndk;29.0.13846066" "cmake;3.22.1"
+
       - name: Decode signing keystore
         if: env.HAS_KEY == 'true'
-        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "${STOREFILE}"
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "app/${STOREFILE}"
 
-      - name: Verify keystore is readable (storepass)
-        if: env.HAS_KEY == 'true'
-        run: keytool -list -keystore "${STOREFILE}" -storepass "${STOREPASS}"
+      - name: Grant execute permission
+        run: chmod +x gradlew
 
-      - name: Verify alias exists
-        if: env.HAS_KEY == 'true'
-        run: keytool -list -keystore "${STOREFILE}" -alias "${ALIAS}" -storepass "${STOREPASS}"
+      - name: Fix gradle.properties for CI
+        run: sed -i '/android\.aapt2FromMavenOverride/d' gradle.properties
 
-      - name: Verify key password (actual signing test)
+      - name: Build release APK
         if: env.HAS_KEY == 'true'
-        run: |
-          EFFECTIVE_KEYPASS="${KEYPASS:-$STOREPASS}"
-          keytool -certreq -keystore "${STOREFILE}" -alias "${ALIAS}" \
-            -storepass "${STOREPASS}" -keypass "${EFFECTIVE_KEYPASS}" \
-            > /dev/null && echo "✅ Key password valid — private key accessible"
+        run: ./gradlew assembleRelease
 
-      - name: Print certificate fingerprint (sanity check)
-        if: env.HAS_KEY == 'true'
-        run: |
-          keytool -list -v -keystore "${STOREFILE}" -alias "${ALIAS}" \
-            -storepass "${STOREPASS}" | grep -A1 "SHA256"
+      - name: Upload signed APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RedT-signed
+          path: app/build/outputs/apk/release/*.apk
