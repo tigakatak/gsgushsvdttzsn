@@ -1,4 +1,4 @@
-name: Release
+name: Verify Signing Key
 
 on:
   workflow_dispatch:
@@ -10,9 +10,46 @@ env:
   STOREFILE: redt-release.jks
   HAS_KEY: ${{ secrets.KEYSTORE_BASE64 != '' }}
 
-- name: Debug check
-  run: |
-    echo "Alias set: ${ALIAS:+yes}"
-    echo "Keypass set: ${KEYPASS:+yes}"
-    echo "Storepass set: ${STOREPASS:+yes}"
-    echo "Has key: $HAS_KEY"
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check secrets exist
+        run: |
+          echo "Alias set: ${ALIAS:+yes}"
+          echo "Keypass set: ${KEYPASS:+yes}"
+          echo "Storepass set: ${STOREPASS:+yes}"
+          echo "Has key: $HAS_KEY"
+
+      - name: Set up JDK 17
+        if: env.HAS_KEY == 'true'
+        uses: actions/setup-java@v5.6.0
+        with:
+          java-version: "17"
+          distribution: temurin
+
+      - name: Decode signing keystore
+        if: env.HAS_KEY == 'true'
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "${STOREFILE}"
+
+      - name: Verify keystore is readable (storepass)
+        if: env.HAS_KEY == 'true'
+        run: keytool -list -keystore "${STOREFILE}" -storepass "${STOREPASS}"
+
+      - name: Verify alias exists
+        if: env.HAS_KEY == 'true'
+        run: keytool -list -keystore "${STOREFILE}" -alias "${ALIAS}" -storepass "${STOREPASS}"
+
+      - name: Verify key password (actual signing test)
+        if: env.HAS_KEY == 'true'
+        run: |
+          EFFECTIVE_KEYPASS="${KEYPASS:-$STOREPASS}"
+          keytool -certreq -keystore "${STOREFILE}" -alias "${ALIAS}" \
+            -storepass "${STOREPASS}" -keypass "${EFFECTIVE_KEYPASS}" \
+            > /dev/null && echo "✅ Key password valid — private key accessible"
+
+      - name: Print certificate fingerprint (sanity check)
+        if: env.HAS_KEY == 'true'
+        run: |
+          keytool -list -v -keystore "${STOREFILE}" -alias "${ALIAS}" \
+            -storepass "${STOREPASS}" | grep -A1 "SHA256"
