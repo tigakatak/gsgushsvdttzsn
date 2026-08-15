@@ -7,6 +7,7 @@ env:
   ALIAS: ${{ secrets.ALIAS }}
   KEYPASS: ${{ secrets.KEYPASS }}
   STOREPASS: ${{ secrets.STOREPASS }}
+  STOREFILE: redt-release.jks
   HAS_KEY: ${{ secrets.KEYSTORE_BASE64 != '' }}
 
 jobs:
@@ -24,12 +25,12 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
 
-      - name: Install NDK 29 for proot native build
+      - name: Install NDK 29 and CMake
         run: sdkmanager "ndk;29.0.13846066" "cmake;3.22.1"
 
       - name: Decode signing keystore
         if: env.HAS_KEY == 'true'
-        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > app/redt-release.jks
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "app/${STOREFILE}"
 
       - name: Grant execute permission
         run: chmod +x gradlew
@@ -38,11 +39,8 @@ jobs:
         run: sed -i '/android\.aapt2FromMavenOverride/d' gradle.properties
 
       - name: Build release APK
+        if: env.HAS_KEY == 'true'
         run: ./gradlew assembleRelease
-        env:
-          ALIAS: ${{ secrets.ALIAS }}
-          KEYPASS: ${{ secrets.KEYPASS }}
-          STOREPASS: ${{ secrets.STOREPASS }}
 
       - name: Upload signed APK artifact
         uses: actions/upload-artifact@v4
