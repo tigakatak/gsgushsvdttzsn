@@ -619,13 +619,34 @@ class DistroInstaller(private val context: Context) {
         false
     }
 
+    /**
+     * True when [resolv] already points at a real upstream nameserver.
+     * Distro images often ship the systemd-resolved stub (nameserver
+     * 127.0.0.53) or a symlink to /run/...: inside proot nothing listens on
+     * 127.0.0.53, so DNS silently breaks. Treat loopback-only files as
+     * unusable and rewrite them with the host's real DNS servers.
+     */
+    private fun hasUsableNameserver(resolv: File): Boolean {
+        return try {
+            resolv.readLines().any { line ->
+                val trimmed = line.trim()
+                if (!trimmed.startsWith("nameserver")) return@any false
+                val addr = trimmed.removePrefix("nameserver").trim()
+                addr.isNotEmpty() &&
+                    !addr.startsWith("127.") &&
+                    addr != "::1" && addr != "::" && addr != "0.0.0.0"
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     private fun writeResolvConf(rootfs: File) {
         val resolv = File(rootfs, "etc/resolv.conf")
-        if (resolv.exists() && resolv.length() > 0L) return
+        if (hasUsableNameserver(resolv)) return
         resolv.parentFile?.mkdirs()
-        // A dangling symlink (e.g. -> /run/resolvconf/resolv.conf) reports
-        // exists() == false; remove the link itself so writeText below cannot
-        // follow it out of the rootfs.
+        // A symlink (e.g. -> /run/resolvconf/resolv.conf) must be removed
+        // first so writeText below cannot follow it out of the rootfs.
         if (isSymbolicLink(resolv)) resolv.delete()
         safeWriteText(resolv, systemDnsServers().joinToString("") { "nameserver $it\n" })
     }
@@ -650,7 +671,7 @@ class DistroInstaller(private val context: Context) {
         } catch (_: Exception) {
             emptyList()
         }
-        return hostResolv.ifEmpty { listOf("8.8.8.8") }
+        return hostResolv.ifEmpty { listOf("8.8.8.8", "1.1.1.1") }
     }
 
     private fun ensureCaCertificates(rootfs: File): String? {
@@ -890,7 +911,7 @@ class DistroInstaller(private val context: Context) {
         }
 
         val resolv = File(rootfs, "etc/resolv.conf")
-        if (!resolv.exists() || resolv.length() == 0L) {
+        if (!hasUsableNameserver(resolv)) {
             writeResolvConf(rootfs)
             repairs.add("Created etc/resolv.conf")
         }
