@@ -1,3 +1,5 @@
+import java.io.DataInputStream
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -24,7 +26,8 @@ android {
 
     signingConfigs {
         create("release") {
-            storeFile = file("redt-release.jks")
+            val ksFile = file("redt-release.jks")
+            storeFile = ksFile
             storePassword = System.getenv("KEYSTORE_PASSWORD")
             keyAlias = System.getenv("KEY_ALIAS")
             // JKS keystores may carry a key password distinct from the store
@@ -33,7 +36,7 @@ android {
             // "Given final block not properly padded". Detect the format via
             // the magic bytes and pick the key password accordingly.
             val isJks = runCatching {
-                java.io.DataInputStream(storeFile.inputStream().buffered()).use { it.readInt() }
+                DataInputStream(ksFile.inputStream().buffered()).use { it.readInt() }
             }.getOrDefault(0) == 0xFEEDFEED.toInt()
             keyPassword = if (isJks) {
                 System.getenv("KEY_PASSWORD")?.takeIf { it.isNotEmpty() }
