@@ -496,6 +496,16 @@ class DistroInstaller(private val context: Context) {
         }
     }
 
+    /**
+     * Extracts a backup archive produced by [backup] (entries nested under a
+     * top-level dir named after the distro) into [dest]. Uses the bundled
+     * Java codecs instead of the device's tar, which fails on PAX/GNU
+     * long-name entries with only "exit code 1".
+     */
+    fun extractBackupArchive(backupFile: File, dest: File, onProgress: (Progress) -> Unit) {
+        extractWithJavaGz(backupFile, dest, onProgress)
+    }
+
     private fun extractTarEntries(
         tarIn: TarArchiveInputStream, dest: File,
         totalForProgress: Long,
@@ -980,7 +990,15 @@ class DistroInstaller(private val context: Context) {
     suspend fun uninstall(distroName: String) {
         val validName = validateDistroName(distroName)
         val dir = getRootfsDir(validName)
-        deleteRootfsSafe(dir)
+        // A proot session for this distro may still be tearing down and hold
+        // directories as its cwd: retry until the tree is fully gone instead
+        // of leaving a husk that later triggers spurious overwrite prompts.
+        var attempts = 0
+        while (dir.exists() && attempts < 5) {
+            deleteRootfsSafe(dir)
+            attempts++
+            if (dir.exists()) kotlinx.coroutines.delay(200)
+        }
         com.redt.util.Format.invalidate(dir)
         File(context.filesDir, "installed/$validName").delete()
         val distro = DistroRegistry.allDistros.firstOrNull { it.name == validName }

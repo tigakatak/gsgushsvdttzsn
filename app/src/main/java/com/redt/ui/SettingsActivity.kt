@@ -34,7 +34,6 @@ class SettingsActivity : AppCompatActivity() {
 
     companion object {
         private const val REQ_IMPORT_FONT = 2001
-        private const val RESTORE_TIMEOUT_SECONDS = 600L
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -329,7 +328,10 @@ class SettingsActivity : AppCompatActivity() {
                         ).show()
                         return@setItems
                     }
-                    if (rootfsDir.exists()) {
+                    // Prompt only for a distro that is actually installed:
+                    // a leftover rootfs husk from a failed uninstall must not
+                    // trigger a spurious overwrite confirmation.
+                    if (installer.isInstalled(distroName)) {
                         androidx.appcompat.app.AlertDialog.Builder(this)
                             .setTitle("Overwrite $distroName?")
                             .setMessage("The existing rootfs will be deleted and replaced.")
@@ -438,29 +440,11 @@ class SettingsActivity : AppCompatActivity() {
                     if (isBackup) {
                         installer.deleteRootfsSafe(rootfsDir)
                         rootfsDir.mkdirs()
-                        val pb = ProcessBuilder(
-                            "tar", "-xzf", backupFile.absolutePath, "-C", rootfsDir.absolutePath
-                        )
-                        pb.redirectErrorStream(true)
-                        val proc = pb.start()
-                        try {
-                            val drain = Thread {
-                                try { proc.inputStream.use { it.readBytes() } } catch (_: Exception) {}
-                            }
-                            drain.isDaemon = true
-                            drain.start()
-                            val finished = proc.waitFor(RESTORE_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)
-                            if (!finished) {
-                                proc.destroyForcibly()
-                                throw RuntimeException("Restore timed out after ${RESTORE_TIMEOUT_SECONDS}s")
-                            }
-                            drain.join(2000)
-                            if (proc.exitValue() != 0) {
-                                throw RuntimeException("tar exited with code ${proc.exitValue()}")
-                            }
-                        } finally {
-                            proc.destroy()
-                        }
+                        // Extract with the bundled Java codecs instead of the
+                        // device's tar: toybox tar fails on PAX/GNU long-name
+                        // entries produced by the Java backup fallback and
+                        // reports only "exit code 1".
+                        installer.extractBackupArchive(backupFile, rootfsDir) { }
                         if (!File(rootfsDir, "etc/os-release").exists() &&
                             !File(rootfsDir, "bin/busybox").exists()) {
                             val subdirs = rootfsDir.listFiles { f -> f.isDirectory } ?: emptyArray()
