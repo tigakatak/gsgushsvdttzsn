@@ -490,6 +490,13 @@ class SettingsActivity : AppCompatActivity() {
                 ).show()
                 populateDistroList()
             } catch (e: Exception) {
+                // A failed restore must not leave a half-extracted rootfs
+                // behind: it would pile up and make the next attempt show a
+                // spurious "Overwrite?" prompt for a distro that was never
+                // actually installed.
+                try {
+                    installer.deleteRootfsSafe(rootfsDir)
+                } catch (_: Exception) {}
                 if (!isFinishing && !isDestroyed) dialog.dismiss()
                 Toast.makeText(
                     this@SettingsActivity,
