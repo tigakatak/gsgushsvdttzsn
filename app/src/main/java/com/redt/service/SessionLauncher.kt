@@ -65,7 +65,6 @@ mkdir -p "$rootfsPath/tmp" "$rootfsPath/run/shm"
 ulimit -n ${Prefs.ULIMIT_NOFILE} 2>/dev/null
 ulimit -u ${Prefs.ULIMIT_NPROC} 2>/dev/null
 exec "$prootBin" -0 -L -r "$rootfsPath" -w /root --link2symlink --sysvipc --ashmem-memfd --kill-on-exit \
-    --kernel-release='\Linux\localhost\6.1.0-redt\#1 SMP RedT\aarch64\localdomain\-1\' \
     -b /dev -b /proc \
     -b /proc/self/fd:/dev/fd \
     -b /proc/self/fd/0:/dev/stdin \
