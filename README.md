@@ -51,12 +51,12 @@ export ANDROID_HOME=/path/to/android-sdk
 The debug APK will be at `app/build/outputs/apk/debug/app-debug.apk`.
 
 To build a **signed** release APK locally, place the keystore at
-`app/redt-release.jks` and export the signing secrets:
+`app/redt-release.jks` and export the signing environment variables:
 
 ```bash
-export ALIAS=your-key-alias
-export KEYPASS=your-key-password
-export STOREPASS=your-keystore-password
+export KEYSTORE_PASSWORD=your-keystore-password
+export KEY_ALIAS=your-key-alias
+export KEY_PASSWORD=your-key-password
 ./gradlew assembleRelease
 ```
 On CI (`.github/workflows/release.yml`), run the **Release** workflow from the

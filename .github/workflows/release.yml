@@ -34,9 +34,11 @@ jobs:
           echo "::error::Signing secrets (ALIAS/KEYPASS/STOREPASS/KEYSTORE_BASE64) are not configured."
           exit 1
 
-      - name: Decode signing keystore
+      - name: Decode keystore
         if: env.HAS_KEY == 'true'
-        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "app/${STOREFILE}"
+        run: printf '%s' "$KEYSTORE_BASE64" | base64 -d > app/redt-release.jks
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
 
       - name: Verify keystore and key password
         if: env.HAS_KEY == 'true'
@@ -46,6 +48,7 @@ jobs:
             -keypass "${KEYPASS:-$STOREPASS}" > /dev/null
           echo "Keystore and key password OK"
 
+
       - name: Grant execute permission
         run: chmod +x gradlew
 
@@ -54,11 +57,11 @@ jobs:
 
       - name: Build release APK
         if: env.HAS_KEY == 'true'
-        run: |
-          echo "ALIAS length: ${#ALIAS}"
-          echo "KEYPASS length: ${#KEYPASS}"
-          echo "STOREPASS length: ${#STOREPASS}"
-          ./gradlew assembleRelease
+        run: ./gradlew assembleRelease
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.STOREPASS }}
+          KEY_ALIAS: ${{ secrets.ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEYPASS }}
 
       - name: Upload signed APK artifact
         uses: actions/upload-artifact@v4
