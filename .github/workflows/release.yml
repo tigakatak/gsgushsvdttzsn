@@ -28,9 +28,23 @@ jobs:
       - name: Install NDK 29 and CMake
         run: sdkmanager "ndk;29.0.13846066" "cmake;3.22.1"
 
+      - name: Require signing secrets
+        if: env.HAS_KEY != 'true'
+        run: |
+          echo "::error::Signing secrets (ALIAS/KEYPASS/STOREPASS/KEYSTORE_BASE64) are not configured."
+          exit 1
+
       - name: Decode signing keystore
         if: env.HAS_KEY == 'true'
         run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "app/${STOREFILE}"
+
+      - name: Verify keystore and key password
+        if: env.HAS_KEY == 'true'
+        run: |
+          keytool -certreq -keystore app/redt-release.jks -alias "${ALIAS}" \
+            -storepass "${STOREPASS}" \
+            -keypass "${KEYPASS:-$STOREPASS}" > /dev/null
+          echo "Keystore and key password OK"
 
       - name: Grant execute permission
         run: chmod +x gradlew
