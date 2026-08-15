@@ -50,6 +50,20 @@ export ANDROID_HOME=/path/to/android-sdk
 
 The debug APK will be at `app/build/outputs/apk/debug/app-debug.apk`.
 
+To build a **signed** release APK locally, place the keystore at
+`app/redt-release.jks` and export the signing secrets:
+
+```bash
+export ALIAS=your-key-alias
+export KEYPASS=your-key-password
+export STOREPASS=your-keystore-password
+./gradlew assembleRelease
+```
+On CI (`.github/workflows/release.yml`), run the **Release** workflow from the
+Actions tab. It reads the GitHub secrets `ALIAS`, `KEYPASS`, `STOREPASS` and
+`KEYSTORE_BASE64` (base64 of the `.jks` file), builds the signed APK and
+uploads it as a workflow artifact for download.
+
 ### Building proot from source
 
 Proot is cross-compiled for Android using the NDK. See `native/build-proot.sh` for the build script. It:

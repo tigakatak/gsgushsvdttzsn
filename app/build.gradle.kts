@@ -25,9 +25,9 @@ android {
     signingConfigs {
         create("release") {
             storeFile = file("redt-release.jks")
-            storePassword = System.getenv("KEYSTORE_PASSWORD")
-            keyAlias = System.getenv("KEY_ALIAS")
-            keyPassword = System.getenv("KEY_PASSWORD")
+            storePassword = System.getenv("STOREPASS")
+            keyAlias = System.getenv("ALIAS")
+            keyPassword = System.getenv("KEYPASS")
             enableV1Signing = true
             enableV2Signing = true
             enableV3Signing = true
@@ -37,7 +37,8 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = true
-            val hasReleaseKey = System.getenv("KEYSTORE_PASSWORD") != null
+            val hasReleaseKey = System.getenv("STOREPASS") != null &&
+                file("redt-release.jks").exists()
             if (hasReleaseKey) {
                 signingConfig = signingConfigs.getByName("release")
             }
