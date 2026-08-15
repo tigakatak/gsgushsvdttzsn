@@ -1,4 +1,4 @@
-name: Verify Signing Key
+name: Verify
 
 on:
   workflow_dispatch:
