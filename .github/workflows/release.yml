@@ -54,7 +54,11 @@ jobs:
 
       - name: Build release APK
         if: env.HAS_KEY == 'true'
-        run: ./gradlew assembleRelease
+        run: |
+          echo "ALIAS length: ${#ALIAS}"
+          echo "KEYPASS length: ${#KEYPASS}"
+          echo "STOREPASS length: ${#STOREPASS}"
+          ./gradlew assembleRelease
 
       - name: Upload signed APK artifact
         uses: actions/upload-artifact@v4
