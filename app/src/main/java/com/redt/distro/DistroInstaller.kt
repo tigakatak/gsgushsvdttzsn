@@ -326,7 +326,7 @@ class DistroInstaller(private val context: Context) {
             conn.connect()
 
             val responseCode = conn.responseCode
-            if (responseCode == HttpURLConnection.HTTP_REQUESTED_RANGE_NOT_SATISFIABLE) {
+            if (responseCode == HTTP_RANGE_NOT_SATISFIABLE) {
                 // Server says the partial already covers the whole file:
                 // promote it and let the caller's checksum verify it.
                 if (!partial.renameTo(dest)) {
@@ -627,8 +627,8 @@ class DistroInstaller(private val context: Context) {
         tarIn: TarArchiveInputStream, dest: File,
         totalForProgress: Long,
         onProgress: (Progress) -> Unit,
-        bytesReadProvider: () -> Long,
-        gen: Int
+        gen: Int,
+        bytesReadProvider: () -> Long
     ): Int {
         val firstEntry = tarIn.getNextEntry()
         var prefixToStrip = ""
@@ -1112,7 +1112,7 @@ class DistroInstaller(private val context: Context) {
         val partialCutoff = System.currentTimeMillis() - 7 * dayMs
         val rootfsParent = File(context.filesDir, "rootfs").canonicalFile
         rootfsParent.listFiles()?.forEach { dir ->
-            if (dir.isDirectory && !dir.isSymbolicLink &&
+            if (dir.isDirectory && !isSymbolicLink(dir) &&
                 !File(context.filesDir, "installed/${dir.name}").exists() &&
                 dir.lastModified() < huskCutoff
             ) {
@@ -1224,6 +1224,13 @@ class DistroInstaller(private val context: Context) {
         const val NATIVE_XZ_TIMEOUT_SECONDS = 300L
         const val NATIVE_XZ_EXIT_TIMEOUT_SECONDS = 60L
         const val PROGRESS_EMIT_INTERVAL_MS = 100L
+
+        /**
+         * java.net.HttpURLConnection on Android does not define
+         * HTTP_REQUESTED_RANGE_NOT_SATISFIABLE (OpenJDK only), so the 416
+         * status code is spelled out here.
+         */
+        const val HTTP_RANGE_NOT_SATISFIABLE = 416
 
         /**
          * Tar type flag for symbolic links ('2'). TarConstants.LF_SYMLINK is

@@ -17,12 +17,14 @@ import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import com.google.android.material.card.MaterialCardView
 import com.redt.BuildConfig
 import com.redt.R
 import com.redt.distro.DistroInstaller
 import com.redt.service.TerminalService
 import com.redt.session.terminalSessionStore
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File

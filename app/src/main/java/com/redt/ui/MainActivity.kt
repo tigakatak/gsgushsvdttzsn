@@ -12,6 +12,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.card.MaterialCardView
 import com.redt.R
+import com.redt.distro.DistroInstaller
 import com.redt.session.terminalSessionStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
