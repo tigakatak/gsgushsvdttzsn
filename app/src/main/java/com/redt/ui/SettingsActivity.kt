@@ -356,34 +356,6 @@ class SettingsActivity : AppCompatActivity() {
 
         versionInfo.text = "${getString(R.string.app_name)} v${BuildConfig.VERSION_NAME}"
 
-        // Breakdown of this app's internal storage so the numbers can be
-        // compared against the system Settings "Storage" figure. Tarballs are
-        // deleted after every successful install now, so the download cache
-        // should normally be near zero (resume fragments and stale files are
-        // swept by DistroInstaller.sweepOrphanFiles).
-        val storageUsageBtn = findViewById<TextView>(R.id.storage_usage_text)
-        fun updateStorageUsageLabel() {
-            lifecycleScope.launch(Dispatchers.IO) {
-                val context = applicationContext
-                val distroBytes = installer.getInstalledDistros().sumOf {
-                    com.redt.util.Format.dirSize(installer.getRootfsDir(it))
-                }
-                val cacheBytes = com.redt.util.Format.dirSize(File(context.filesDir, "tarballs"))
-                val fontBytes = com.redt.util.Format.dirSize(File(context.filesDir, "fonts"))
-                val total = distroBytes + cacheBytes + fontBytes
-                withContext(Dispatchers.Main) {
-                    if (!isFinishing && !isDestroyed) {
-                        storageUsageBtn.text =
-                            "Storage used: ${com.redt.util.Format.size(total)}  " +
-                                "(distros ${com.redt.util.Format.size(distroBytes)}, " +
-                                "download cache ${com.redt.util.Format.size(cacheBytes)}, " +
-                                "fonts ${com.redt.util.Format.size(fontBytes)})"
-                    }
-                }
-            }
-        }
-        updateStorageUsageLabel()
-
         findViewById<TextView>(R.id.crash_logs_btn).setOnClickListener {
             val base = getExternalFilesDir(null) ?: filesDir
             val crashDir = File(base, "crash")

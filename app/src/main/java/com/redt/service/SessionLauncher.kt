@@ -169,9 +169,23 @@ exec "$prootBin" -0 -L -r "$rootfsPath" -w /root --link2symlink --sysvipc --ashm
 
             val rootDir = File(rootfsDir, "root").apply { mkdirs() }
             val isNew = !File(rootDir, ".init_done").exists()
+            // Shell customizations live in a dedicated file sourced from
+            // ~/.bashrc. Distros that ship their own .bashrc (Ubuntu/Debian
+            // base-files default) keep theirs intact and still get the RedT
+            // prompt/aliases. Only the source line is ever added to .bashrc,
+            // so user edits there are never overwritten.
             val bashrc = File(rootDir, ".bashrc")
-            if (!bashrc.exists()) {
-                bashrc.writeText("""# ~/.bashrc
+            val sourceLine = "[ -r ~/.redt_bashrc ] && . ~/.redt_bashrc"
+            val existingBashrc = runCatching { bashrc.readText() }.getOrDefault("")
+            if (existingBashrc.isEmpty()) {
+                bashrc.writeText("# RedT additions\n$sourceLine\n")
+            } else if (!existingBashrc.contains(sourceLine)) {
+                bashrc.appendText(
+                    (if (existingBashrc.endsWith("\n")) "" else "\n") +
+                        "# RedT additions\n$sourceLine\n"
+                )
+            }
+            File(rootDir, ".redt_bashrc").writeText("""# RedT shell customizations
 export TERM=xterm-256color
 stty erase ^?
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -188,7 +202,6 @@ alias rm='rm -i'
 alias cp='cp -i'
 alias mv='mv -i'
 """)
-            }
             val startup = File(rootDir, ".startup")
             val startupScript = """has_bash() { command -v bash >/dev/null 2>&1; }
 has_ca() { command -v update-ca-certificates >/dev/null 2>&1 || command -v update-ca-trust >/dev/null 2>&1; }
