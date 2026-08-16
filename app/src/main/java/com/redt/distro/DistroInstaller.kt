@@ -1,12 +1,14 @@
 package com.redt.distro
 
 import android.content.Context
+import android.os.StatFs
 import android.provider.DocumentsContract
 import android.system.Os
 import android.system.OsConstants
 import android.util.Log
 import com.redt.ui.Prefs
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
@@ -21,10 +23,13 @@ import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
+import java.util.concurrent.atomic.AtomicInteger
 
 class DistroInstaller(private val context: Context) {
 
     data class Progress(val percent: Int, val speed: String)
+
+    private val generation = AtomicInteger(0)
 
     @Volatile
     var cancelled = false
@@ -33,11 +38,21 @@ class DistroInstaller(private val context: Context) {
         cancelled = true
     }
 
+    /**
+     * Starts a new job: clears the cancel flag and bumps the generation so a
+     * still-draining previous job fails its next [checkCancel] even though
+     * the shared [cancelled] flag has been reset.
+     */
+    private fun beginJob(): Int {
+        cancelled = false
+        return generation.incrementAndGet()
+    }
+
     suspend fun install(
         distro: Distro,
         onProgress: (Progress) -> Unit
     ) = withContext(Dispatchers.IO) {
-        cancelled = false
+        val gen = beginJob()
         try {
             val rootfsDir = getRootfsDir(distro.name)
             if (rootfsDir.exists()) {
@@ -47,35 +62,42 @@ class DistroInstaller(private val context: Context) {
 
             val tarball = cachedTarballFile(distro)
             if (tarball.exists()) tarball.delete()
+            val partial = File(tarballDir(), tarball.name + ".part")
             val tarballUrl = distro.tarballUrl()
             Log.i("DistroInstaller", "Downloading $tarballUrl")
 
-            downloadTarball(tarballUrl, tarball, onProgress)
-            checkCancel()
+            downloadTarball(tarballUrl, tarball, partial, onProgress, gen)
+            checkCancel(gen)
 
             val expectedSha = distro.sha256
             if (expectedSha.isNotEmpty()) {
                 verifyChecksum(tarball, expectedSha)
             }
-            checkCancel()
+            checkCancel(gen)
 
-            extractTarball(tarball, rootfsDir, onProgress)
-            checkCancel()
+            extractTarball(tarball, rootfsDir, onProgress, gen)
+            checkCancel(gen)
             fixupDirectoryPermissions(rootfsDir)
-            setupRootfs(rootfsDir)
             com.redt.util.Format.invalidate(rootfsDir)
             saveInstalled(distro.name)
+            // The base tarball exists only to reset without re-downloading;
+            // keeping it doubles disk usage (rootfs + compressed copy). Drop
+            // it once the install is committed: reset falls back to a fresh
+            // download, and the UI no longer exposes a tarball-cache control.
+            if (!tarball.delete() && tarball.exists()) {
+                Log.w("DistroInstaller", "Could not delete cached tarball ${tarball.name}")
+            }
             Log.i("DistroInstaller", "Install complete for ${distro.name}")
         } catch (e: CancelledException) {
             Log.i("DistroInstaller", "Install cancelled for ${distro.name}")
-            cleanup(distro.name)
+            cleanup(distro.name, gen)
             throw e
         } catch (e: kotlinx.coroutines.CancellationException) {
-            cleanup(distro.name)
+            cleanup(distro.name, gen)
             throw e
         } catch (e: Exception) {
             Log.e("DistroInstaller", "Install failed", e)
-            cleanup(distro.name)
+            cleanup(distro.name, gen)
             throw Exception("Install failed: ${e.message}", e)
         }
     }
@@ -85,7 +107,7 @@ class DistroInstaller(private val context: Context) {
         distroName: String,
         onProgress: (Progress) -> Unit
     ) = withContext(Dispatchers.IO) {
-        cancelled = false
+        val gen = beginJob()
         try {
             val rootfsDir = getRootfsDir(distroName)
             if (rootfsDir.exists()) {
@@ -93,12 +115,13 @@ class DistroInstaller(private val context: Context) {
             }
             rootfsDir.mkdirs()
 
+            requireFreeSpace(extractionSpaceFor(tarball), "extracting ${tarball.name}")
             if (tarball.name.endsWith(".tar.xz")) {
-                extractTarball(tarball, rootfsDir, onProgress)
+                extractTarball(tarball, rootfsDir, onProgress, gen)
             } else {
-                extractWithJavaGz(tarball, rootfsDir, onProgress)
+                extractWithJavaGz(tarball, rootfsDir, onProgress, gen)
             }
-            checkCancel()
+            checkCancel(gen)
 
             if (!File(rootfsDir, "etc/os-release").exists() &&
                 !File(rootfsDir, "bin/busybox").exists()
@@ -113,14 +136,14 @@ class DistroInstaller(private val context: Context) {
             Log.i("DistroInstaller", "Install from file complete for $distroName")
         } catch (e: CancelledException) {
             Log.i("DistroInstaller", "Install from file cancelled for $distroName")
-            cleanup(distroName)
+            cleanup(distroName, gen)
             throw e
         } catch (e: kotlinx.coroutines.CancellationException) {
-            cleanup(distroName)
+            cleanup(distroName, gen)
             throw e
         } catch (e: Exception) {
             Log.e("DistroInstaller", "Install from file failed", e)
-            cleanup(distroName)
+            cleanup(distroName, gen)
             throw Exception("Install from file failed: ${e.message}", e)
         }
     }
@@ -149,7 +172,7 @@ class DistroInstaller(private val context: Context) {
         distroName: String,
         onProgress: (Progress) -> Unit
     ): Boolean = withContext(Dispatchers.IO) {
-        cancelled = false
+        val gen = beginJob()
         val distro = com.redt.distro.DistroRegistry.allDistros
             .firstOrNull { it.name == distroName }
         if (distro == null) return@withContext false
@@ -169,24 +192,28 @@ class DistroInstaller(private val context: Context) {
             if (expectedSha.isNotEmpty()) {
                 verifyChecksum(tarball, expectedSha)
             }
-            checkCancel()
-            extractTarball(tarball, rootfsDir, onProgress)
-            checkCancel()
+            checkCancel(gen)
+            requireFreeSpace(extractionSpaceFor(tarball), "resetting $distroName")
+            extractTarball(tarball, rootfsDir, onProgress, gen)
+            checkCancel(gen)
             fixupDirectoryPermissions(rootfsDir)
             setupRootfs(rootfsDir)
             com.redt.util.Format.invalidate(rootfsDir)
             saveInstalled(distroName)
+            if (!tarball.delete() && tarball.exists()) {
+                Log.w("DistroInstaller", "Could not delete cached tarball ${tarball.name}")
+            }
             Log.i("DistroInstaller", "Reset complete for $distroName")
             true
         } catch (e: CancelledException) {
-            cleanup(distroName)
+            cleanup(distroName, gen)
             false
         } catch (e: kotlinx.coroutines.CancellationException) {
-            cleanup(distroName)
+            cleanup(distroName, gen)
             throw e
         } catch (e: Exception) {
             Log.e("DistroInstaller", "Reset failed", e)
-            cleanup(distroName)
+            cleanup(distroName, gen)
             throw Exception("Reset failed: ${e.message}", e)
         }
     }
@@ -244,33 +271,46 @@ class DistroInstaller(private val context: Context) {
         f.exists()
     }
 
-    private fun checkCancel() {
-        if (cancelled) throw CancelledException()
+    private fun checkCancel(gen: Int) {
+        if (cancelled || generation.get() != gen) throw CancelledException()
     }
 
-    private suspend fun cleanup(distroName: String) {
-        if (runCatching { validateDistroName(distroName) }.isFailure) return
-        try {
-            val dir = getRootfsDir(distroName)
-            deleteRootfsSafe(dir)
-            com.redt.util.Format.invalidate(dir)
-        } catch (_: Exception) {}
-        try {
-            val distro = DistroRegistry.allDistros.firstOrNull { it.name == distroName }
-            val cached = if (distro != null) cachedTarballFile(distro)
-            else File(tarballDir(), "$distroName.tar.xz")
-            cached.delete()
-        } catch (_: Exception) {}
-        try {
-            File(context.filesDir, "installed/$distroName").delete()
-        } catch (_: Exception) {}
-        notifyDocumentRootsChanged()
+    private suspend fun cleanup(distroName: String, gen: Int) {
+        // A newer job now owns these paths and handles them itself; deleting
+        // here would race its download/extraction.
+        if (generation.get() != gen) return
+        // Runs even when this coroutine is being cancelled: a cancelled
+        // install must not leave a half-extracted rootfs behind. Plain
+        // withContext(Dispatchers.IO) would hit the cancellation fast-path
+        // and skip the delete entirely.
+        withContext(NonCancellable) {
+            if (runCatching { validateDistroName(distroName) }.isFailure) return@withContext
+            try {
+                val dir = getRootfsDir(distroName)
+                deleteRootfsSafe(dir)
+                com.redt.util.Format.invalidate(dir)
+            } catch (_: Exception) {}
+            try {
+                val distro = DistroRegistry.allDistros.firstOrNull { it.name == distroName }
+                val cached = if (distro != null) cachedTarballFile(distro)
+                else File(tarballDir(), "$distroName.tar.xz")
+                cached.delete()
+                // The .part file is intentionally kept: a fresh attempt
+                // resumes from it instead of restarting the download.
+            } catch (_: Exception) {}
+            try {
+                File(context.filesDir, "installed/$distroName").delete()
+            } catch (_: Exception) {}
+            notifyDocumentRootsChanged()
+        }
     }
 
     private suspend fun downloadTarball(
         urlString: String,
         dest: File,
-        onProgress: (Progress) -> Unit
+        partial: File,
+        onProgress: (Progress) -> Unit,
+        gen: Int
     ) {
         val httpUrl = URL(urlString)
         val conn = httpUrl.openConnection() as HttpURLConnection
@@ -278,29 +318,62 @@ class DistroInstaller(private val context: Context) {
             conn.connectTimeout = Prefs.CONNECT_TIMEOUT_MS
             conn.readTimeout = Prefs.READ_TIMEOUT_MS
             conn.instanceFollowRedirects = true
+            var resumeOffset = 0L
+            if (partial.exists()) {
+                resumeOffset = partial.length()
+                conn.setRequestProperty("Range", "bytes=$resumeOffset-")
+            }
             conn.connect()
 
             val responseCode = conn.responseCode
-            if (responseCode != HttpURLConnection.HTTP_OK) {
+            if (responseCode == HttpURLConnection.HTTP_REQUESTED_RANGE_NOT_SATISFIABLE) {
+                // Server says the partial already covers the whole file:
+                // promote it and let the caller's checksum verify it.
+                if (!partial.renameTo(dest)) {
+                    partial.copyTo(dest, overwrite = true)
+                    partial.delete()
+                }
+                return
+            }
+            val resuming = responseCode == HttpURLConnection.HTTP_PARTIAL && resumeOffset > 0
+            if (responseCode != HttpURLConnection.HTTP_OK && !resuming) {
                 throw Exception("HTTP $responseCode for $urlString")
             }
+            if (!resuming) resumeOffset = 0
 
-            val total = conn.contentLengthLong
+            val rangeLen = conn.contentLengthLong
+            val total = if (rangeLen > 0) resumeOffset + rangeLen else -1L
+            if (total > 0) {
+                // Incoming bytes plus room for the extracted rootfs
+                // (xz decompresses roughly 3:1, gz roughly 2:1).
+                val expansion = if (dest.name.endsWith(".tar.xz", true)) 3L else 2L
+                requireFreeSpace((total - resumeOffset) + total * expansion, "installing ${dest.name}")
+            }
+
             val buffer = ByteArray(8192)
-
-            FileOutputStream(dest).use { output ->
+            FileOutputStream(partial, resuming).use { output ->
                 conn.inputStream.use { input ->
                     var read: Int
-                    var downloaded = 0L
+                    var downloaded = resumeOffset
+                    var sessionBytes = 0L
                     val startTime = System.currentTimeMillis()
+                    var lastEmit = 0L
 
                     while (input.read(buffer).also { read = it } != -1) {
-                        checkCancel()
+                        checkCancel(gen)
                         output.write(buffer, 0, read)
                         downloaded += read
-                        val elapsed = (System.currentTimeMillis() - startTime) / 1000
+                        sessionBytes += read
+                        val now = System.currentTimeMillis()
+                        if (now - lastEmit < PROGRESS_EMIT_INTERVAL_MS &&
+                            (total <= 0 || downloaded < total)
+                        ) {
+                            continue
+                        }
+                        lastEmit = now
+                        val elapsed = (now - startTime) / 1000
                         val speed = if (elapsed > 0) {
-                            "${(downloaded / 1000 / elapsed)} KB/s"
+                            "${(sessionBytes / 1000 / elapsed)} KB/s"
                         } else "0 KB/s"
                         if (total > 0) {
                             val percent = ((downloaded * 100) / total).toInt()
@@ -310,6 +383,10 @@ class DistroInstaller(private val context: Context) {
                         }
                     }
                 }
+            }
+            if (!partial.renameTo(dest)) {
+                partial.copyTo(dest, overwrite = true)
+                partial.delete()
             }
         } finally {
             conn.disconnect()
@@ -328,6 +405,23 @@ class DistroInstaller(private val context: Context) {
         val actual = digest.digest().joinToString("") { "%02x".format(it) }
         if (actual != expectedSha256.lowercase()) {
             throw Exception("SHA-256 mismatch: expected $expectedSha256, got $actual")
+        }
+    }
+
+    /** Rough decompressed size: xz ~3:1, gz ~2:1. */
+    private fun extractionSpaceFor(file: File): Long =
+        file.length() * (if (file.name.endsWith(".tar.xz", true)) 3L else 2L)
+
+    private fun requireFreeSpace(needed: Long, what: String) {
+        if (needed <= 0) return
+        val stat = StatFs(context.filesDir.absolutePath)
+        val available = stat.availableBytes
+        if (available < needed) {
+            throw Exception(
+                "Not enough free space for $what: need " +
+                    "${com.redt.util.Format.size(needed)}, " +
+                    "have ${com.redt.util.Format.size(available)}"
+            )
         }
     }
 
@@ -361,35 +455,51 @@ class DistroInstaller(private val context: Context) {
     private suspend fun extractTarball(
         tarball: File,
         dest: File,
-        onProgress: (Progress) -> Unit
+        onProgress: (Progress) -> Unit,
+        gen: Int
     ) = withContext(Dispatchers.IO) {
         if (tarball.name.endsWith(".tar.gz", true)) {
-            extractWithJavaGz(tarball, dest, onProgress)
+            extractWithJavaGz(tarball, dest, onProgress, gen)
             return@withContext
         }
         val nativeXz = getNativeXz()
         if (nativeXz != null) {
             try {
-                extractWithNativeXz(nativeXz, tarball, dest, onProgress)
+                extractWithNativeXz(nativeXz, tarball, dest, onProgress, gen)
             } catch (e: CancelledException) {
                 throw e
             } catch (e: Exception) {
                 Log.w("DistroInstaller", "Native xz failed, falling back to Java", e)
-                extractWithJavaXz(tarball, dest, onProgress)
+                extractWithJavaXz(tarball, dest, onProgress, gen)
             }
         } else {
-            extractWithJavaXz(tarball, dest, onProgress)
+            extractWithJavaXz(tarball, dest, onProgress, gen)
         }
     }
 
     private fun extractWithNativeXz(
         xzBin: File, tarball: File, dest: File,
-        onProgress: (Progress) -> Unit
+        onProgress: (Progress) -> Unit,
+        gen: Int
     ) {
         val pb = ProcessBuilder(xzBin.absolutePath, "-dc", tarball.absolutePath)
         pb.environment()["LD_LIBRARY_PATH"] = xzBin.parentFile!!.absolutePath
         pb.redirectErrorStream(true)
         val process = pb.start()
+        // Watchdog: native xz runs outside the coroutine; if it stalls the
+        // blocking read below never reaches checkCancel. Kill it so the Java
+        // fallback takes over instead of hanging the install forever.
+        val watchdog = Thread {
+            try {
+                if (!process.waitFor(NATIVE_XZ_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)) {
+                    killProcess(process)
+                }
+            } catch (_: Exception) {
+                // best-effort; nothing else to clean up
+            }
+        }
+        watchdog.isDaemon = true
+        watchdog.start()
         try {
             var streamCompleted = false
             var entryCount = 0
@@ -401,12 +511,16 @@ class DistroInstaller(private val context: Context) {
                         // stream we can observe here is the *decompressed* output, so
                         // fall back to a rough 3:1 ratio (xz typically achieves 3-5:1).
                         val approxDecompressedTotal = tarball.length() * 3L
-                        entryCount = extractTarEntries(tarIn, dest, approxDecompressedTotal, onProgress) { counter.bytesRead }
+                        entryCount = extractTarEntries(tarIn, dest, approxDecompressedTotal, onProgress, gen) { counter.bytesRead }
                     }
                 }
                 streamCompleted = true
             }
-            val exitCode = process.waitFor()
+            if (!process.waitFor(NATIVE_XZ_EXIT_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)) {
+                killProcess(process)
+                throw Exception("Native xz decompressor timed out, falling back")
+            }
+            val exitCode = process.exitValue()
             if (exitCode != 0 && (!streamCompleted || entryCount == 0)) {
                 throw Exception("Native xz decompressor failed (exit $exitCode), falling back")
             }
@@ -456,7 +570,8 @@ class DistroInstaller(private val context: Context) {
 
     private fun extractWithJavaXz(
         tarball: File, dest: File,
-        onProgress: (Progress) -> Unit
+        onProgress: (Progress) -> Unit,
+        gen: Int
     ) {
         try {
             val total = tarball.length()
@@ -465,7 +580,7 @@ class DistroInstaller(private val context: Context) {
                 XZCompressorInputStream(counter).use { xzIn ->
                     BufferedInputStream(xzIn, 65536).use { bis ->
                         TarArchiveInputStream(bis).use { tarIn ->
-                            extractTarEntries(tarIn, dest, total, onProgress) { counter.bytesRead }
+                            extractTarEntries(tarIn, dest, total, onProgress, gen) { counter.bytesRead }
                         }
                     }
                 }
@@ -477,7 +592,8 @@ class DistroInstaller(private val context: Context) {
 
     private fun extractWithJavaGz(
         tarball: File, dest: File,
-        onProgress: (Progress) -> Unit
+        onProgress: (Progress) -> Unit,
+        gen: Int
     ) {
         try {
             val total = tarball.length()
@@ -486,7 +602,7 @@ class DistroInstaller(private val context: Context) {
                 GzipCompressorInputStream(counter).use { gzIn ->
                     BufferedInputStream(gzIn, 65536).use { bis ->
                         TarArchiveInputStream(bis).use { tarIn ->
-                            extractTarEntries(tarIn, dest, total, onProgress) { counter.bytesRead }
+                            extractTarEntries(tarIn, dest, total, onProgress, gen) { counter.bytesRead }
                         }
                     }
                 }
@@ -503,14 +619,16 @@ class DistroInstaller(private val context: Context) {
      * long-name entries with only "exit code 1".
      */
     fun extractBackupArchive(backupFile: File, dest: File, onProgress: (Progress) -> Unit) {
-        extractWithJavaGz(backupFile, dest, onProgress)
+        requireFreeSpace(extractionSpaceFor(backupFile), "restoring ${backupFile.name}")
+        extractWithJavaGz(backupFile, dest, onProgress, generation.get())
     }
 
     private fun extractTarEntries(
         tarIn: TarArchiveInputStream, dest: File,
         totalForProgress: Long,
         onProgress: (Progress) -> Unit,
-        bytesReadProvider: () -> Long
+        bytesReadProvider: () -> Long,
+        gen: Int
     ): Int {
         val firstEntry = tarIn.getNextEntry()
         var prefixToStrip = ""
@@ -593,7 +711,7 @@ class DistroInstaller(private val context: Context) {
                     while (true) {
                         val read = tarIn.read(buf)
                         if (read == -1) break
-                        checkCancel()
+                        checkCancel(gen)
                         out.write(buf, 0, read)
                     }
                 }
@@ -609,15 +727,20 @@ class DistroInstaller(private val context: Context) {
             processEntry(firstEntry)
             count++
         }
+        var lastEmit = 0L
         var entry: org.apache.commons.compress.archivers.tar.TarArchiveEntry? = tarIn.getNextEntry()
         while (entry != null) {
-            checkCancel()
+            checkCancel(gen)
             processEntry(entry)
             count++
-            val pct = if (totalForProgress > 0) {
-                ((bytesReadProvider() * 100L) / totalForProgress).toInt().coerceIn(0, 99)
-            } else 0
-            onProgress(Progress(pct, "Extracting"))
+            val now = System.currentTimeMillis()
+            if (now - lastEmit >= PROGRESS_EMIT_INTERVAL_MS) {
+                lastEmit = now
+                val pct = if (totalForProgress > 0) {
+                    ((bytesReadProvider() * 100L) / totalForProgress).toInt().coerceIn(0, 99)
+                } else 0
+                onProgress(Progress(pct, "Extracting"))
+            }
             entry = tarIn.getNextEntry()
         }
         return count
@@ -630,29 +753,17 @@ class DistroInstaller(private val context: Context) {
     }
 
     /**
-     * True for addresses in 198.18.0.0/15 (RFC 2544 benchmarking range).
-     * Android VPN/firewall apps (NetGuard, Blokada, ...) inject a fake DNS
-     * from this range into the active network; it only works while their
-     * tunnel is up, so it must never leak into the guest resolv.conf.
+     * The guest always gets this fixed public DNS pair. Device DNS is never
+     * used: it breaks when the network changes and VPN apps (NetGuard,
+     * Blokada, ...) can inject resolver addresses (198.18.0.0/15) that only
+     * work while their tunnel is up.
      */
-    private fun isBenchmarkRangeDns(addr: String): Boolean {
-        val octets = addr.split('.')
-        if (octets.size != 4) return false
-        val first = octets[0].toIntOrNull() ?: return false
-        val second = octets[1].toIntOrNull() ?: return false
-        return first == 198 && (second == 18 || second == 19)
-    }
-
-    private fun isUsableNameserver(addr: String): Boolean =
-        addr.isNotEmpty() &&
-            !addr.startsWith("127.") &&
-            addr != "::1" && addr != "::" && addr != "0.0.0.0" &&
-            !isBenchmarkRangeDns(addr)
+    private val guestDnsServers = listOf("8.8.8.8", "1.1.1.1")
 
     /**
-     * True when [resolv] must be rewritten: empty or dangling, loopback-only
-     * (systemd-resolved stub ships 127.0.0.53), or containing VPN/benchmark
-     * nameservers that should be purged.
+     * True when [resolv] must be rewritten: missing/unreadable, or its
+     * nameserver list differs from [guestDnsServers]. This covers baked
+     * device DNS, VPN benchmark ranges, loopback stubs and manual edits.
      */
     private fun needsResolvRewrite(resolv: File): Boolean {
         val nameservers = try {
@@ -663,9 +774,7 @@ class DistroInstaller(private val context: Context) {
         } catch (_: Exception) {
             return true
         }
-        if (nameservers.isEmpty()) return true
-        if (nameservers.any { isBenchmarkRangeDns(it) }) return true
-        return nameservers.none { isUsableNameserver(it) }
+        return nameservers != guestDnsServers
     }
 
     private fun writeResolvConf(rootfs: File) {
@@ -675,31 +784,7 @@ class DistroInstaller(private val context: Context) {
         // A symlink (e.g. -> /run/resolvconf/resolv.conf) must be removed
         // first so writeText below cannot follow it out of the rootfs.
         if (isSymbolicLink(resolv)) resolv.delete()
-        safeWriteText(resolv, systemDnsServers().joinToString("") { "nameserver $it\n" })
-    }
-
-    private fun systemDnsServers(): List<String> {
-        try {
-            val cm = context.getSystemService(android.net.ConnectivityManager::class.java)
-            val network = cm?.activeNetwork
-            if (network != null) {
-                val dns = cm.getLinkProperties(network)?.dnsServers
-                    ?.filter { !it.isAnyLocalAddress && !it.isLoopbackAddress }
-                    ?.map { it.hostAddress }
-                    ?.filter { !it.isNullOrEmpty() }
-                    ?.filterNot { isBenchmarkRangeDns(it) }
-                if (!dns.isNullOrEmpty()) return dns
-            }
-        } catch (_: Exception) {}
-        val hostResolv = try {
-            File("/etc/resolv.conf").readLines().mapNotNull { line ->
-                line.trim().removePrefix("nameserver").trim()
-                    .takeIf { isUsableNameserver(it) }
-            }
-        } catch (_: Exception) {
-            emptyList()
-        }
-        return hostResolv.ifEmpty { listOf("8.8.8.8", "1.1.1.1") }
+        safeWriteText(resolv, guestDnsServers.joinToString("") { "nameserver $it\n" })
     }
 
     private fun ensureCaCertificates(rootfs: File): String? {
@@ -811,7 +896,7 @@ class DistroInstaller(private val context: Context) {
         file.appendText(text)
     }
 
-    private suspend fun setupRootfs(rootfs: File) {
+    suspend fun setupRootfs(rootfs: File) {
         migrateNestedRootfs(rootfs)
         val uid = android.os.Process.myUid()
         val passwd = File(rootfs, "etc/passwd")
@@ -991,13 +1076,17 @@ class DistroInstaller(private val context: Context) {
         val validName = validateDistroName(distroName)
         val dir = getRootfsDir(validName)
         // A proot session for this distro may still be tearing down and hold
-        // directories as its cwd: retry until the tree is fully gone instead
-        // of leaving a husk that later triggers spurious overwrite prompts.
+        // directories as its cwd: retry with growing backoff (up to ~1 minute)
+        // before giving up. A leftover husk is picked up by sweepOrphanFiles
+        // on the next app start.
         var attempts = 0
-        while (dir.exists() && attempts < 5) {
+        while (dir.exists() && attempts < 20) {
             deleteRootfsSafe(dir)
             attempts++
-            if (dir.exists()) kotlinx.coroutines.delay(200)
+            if (dir.exists()) kotlinx.coroutines.delay(300L * (attempts + 1))
+        }
+        if (dir.exists()) {
+            Log.w("DistroInstaller", "Rootfs for $validName not fully removed; startup sweep will retry")
         }
         com.redt.util.Format.invalidate(dir)
         File(context.filesDir, "installed/$validName").delete()
@@ -1005,7 +1094,38 @@ class DistroInstaller(private val context: Context) {
         val cached = if (distro != null) cachedTarballFile(distro)
         else File(tarballDir(), "$validName.tar.xz")
         cached.delete()
+        File(tarballDir(), cached.name + ".part").delete()
         notifyDocumentRootsChanged()
+    }
+
+    /**
+     * Startup cleanup for disk usage not owned by any visible feature:
+     * - rootfs dirs without an "installed" marker (husk of an interrupted
+     *   uninstall) that are at least a day old, so an in-flight install (which
+     *   also has no marker yet) is never touched;
+     * - download files (.part resume fragments and stray tarballs) older than
+     *   a week.
+     */
+    suspend fun sweepOrphanFiles() = withContext(Dispatchers.IO) {
+        val dayMs = 24L * 60 * 60 * 1000
+        val huskCutoff = System.currentTimeMillis() - dayMs
+        val partialCutoff = System.currentTimeMillis() - 7 * dayMs
+        val rootfsParent = File(context.filesDir, "rootfs").canonicalFile
+        rootfsParent.listFiles()?.forEach { dir ->
+            if (dir.isDirectory && !dir.isSymbolicLink &&
+                !File(context.filesDir, "installed/${dir.name}").exists() &&
+                dir.lastModified() < huskCutoff
+            ) {
+                Log.i("DistroInstaller", "Sweeping orphan rootfs ${dir.name}")
+                deleteRootfsSafe(dir)
+            }
+        }
+        tarballDir().listFiles()?.forEach { f ->
+            if (f.isFile && f.lastModified() < partialCutoff) {
+                Log.i("DistroInstaller", "Sweeping stale download file ${f.name}")
+                f.delete()
+            }
+        }
     }
 
     fun backup(distroName: String, outDir: File): Boolean {
@@ -1072,7 +1192,7 @@ class DistroInstaller(private val context: Context) {
             false
         }
         if (isLink) {
-            val entry = TarArchiveEntry(entryName)
+            val entry = TarArchiveEntry(entryName, LF_SYMLINK_FLAG)
             try {
                 val target = try { Os.readlink(dir.absolutePath) } catch (_: Exception) { "" }
                 if (target.isNotEmpty()) {
@@ -1099,19 +1219,19 @@ class DistroInstaller(private val context: Context) {
         }
     }
 
-    fun tarballCacheSize(): Long =
-        com.redt.util.Format.dirSize(tarballDir())
-
-    fun clearTarballCache(): Boolean {
-        var ok = true
-        tarballDir().listFiles()?.forEach {
-            if (it.isFile && !it.delete()) ok = false
-        }
-        return ok
-    }
-
     private companion object {
         const val BACKUP_TIMEOUT_SECONDS = 600L
+        const val NATIVE_XZ_TIMEOUT_SECONDS = 300L
+        const val NATIVE_XZ_EXIT_TIMEOUT_SECONDS = 60L
+        const val PROGRESS_EMIT_INTERVAL_MS = 100L
+
+        /**
+         * Tar type flag for symbolic links ('2'). TarConstants.LF_SYMLINK is
+         * package-private, so the literal is used directly. setLinkName()
+         * alone does NOT set this flag; without it symlinks would be written
+         * as regular (size 0) files and restore as empty files.
+         */
+        val LF_SYMLINK_FLAG: Byte = 2
     }
 
     private fun notifyDocumentRootsChanged() {

@@ -507,17 +507,14 @@
                     android:layout_marginTop="8dp" />
 
                 <TextView
-                    android:id="@+id/tarball_cache_btn"
+                    android:id="@+id/storage_usage_text"
                     android:layout_width="match_parent"
-                    android:layout_height="40dp"
+                    android:layout_height="wrap_content"
                     android:gravity="center"
-                    android:text="Tarball cache"
-                    android:foreground="?attr/selectableItemBackground"
-                    android:textColor="?attr/colorPrimary"
-                    android:textSize="14sp"
-                    android:background="?attr/terminalBg"
-                    android:clickable="true"
-                    android:focusable="true"
+                    android:text=""
+                    android:textColor="?attr/mutedText"
+                    android:textSize="12sp"
+                    android:padding="8dp"
                     android:layout_marginTop="8dp" />
 
                 <TextView

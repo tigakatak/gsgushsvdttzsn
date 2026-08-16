@@ -24,9 +24,9 @@ class TerminalBackend(
 
     private var ctrlDown = false
     private var altDown = false
+    private var shiftDown = false
     private var fontSize = context.prefs().getInt(Prefs.KEY_FONT_SIZE, Prefs.FONT_SIZE_DEFAULT).toFloat()
     var onSessionFinished: ((TerminalSession) -> Unit)? = null
-    var onLinkTap: ((String, Boolean) -> Unit)? = null
     var onModifierConsumed: (() -> Unit)? = null
     var onEmulatorReady: (() -> Unit)? = null
 
@@ -72,8 +72,15 @@ class TerminalBackend(
         fontSize = (fontSize * scale).coerceIn(8f, 36f)
         val size = fontSize.roundToInt()
         view.setTextSize(size)
-        context.prefs().edit().putInt(Prefs.KEY_FONT_SIZE, size).apply()
+        // Persist once, after the pinch gesture settles, instead of writing
+        // the preference on every scale event.
+        view.removeCallbacks(saveFontSizeRunnable)
+        view.postDelayed(saveFontSizeRunnable, 300L)
         return 1f
+    }
+
+    private val saveFontSizeRunnable = Runnable {
+        context.prefs().edit().putInt(Prefs.KEY_FONT_SIZE, fontSize.roundToInt()).apply()
     }
 
     fun applyFontSize() {
@@ -89,14 +96,6 @@ class TerminalBackend(
     }
 
     override fun onSingleTapUp(e: MotionEvent) {
-        val session = view.mTermSession
-        if (session != null && !view.isSelectingText) {
-            val link = detectLinkAt(e)
-            if (link != null) {
-                onLinkTap?.invoke(link.first, link.second)
-                return
-            }
-        }
         view.requestFocus()
         view.post {
             val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
@@ -109,37 +108,8 @@ class TerminalBackend(
         }
     }
 
-    private val urlRegex = Regex("""https?://[^\s"'<>()\[\]{}]+|www\.[^\s"'<>()\[\]{}]+""")
-    private val pathRegex = Regex("""(?:\.\.?/|~/|/)[^\s"'<>()\[\]{}]+""")
-
-    private fun detectLinkAt(e: MotionEvent): Pair<String, Boolean>? {
-        val emu = view.mEmulator ?: return null
-        val colRow = try {
-            view.getColumnAndRow(e, true)
-        } catch (_: Exception) {
-            return null
-        } ?: return null
-        val col = colRow[0]
-        val row = colRow[1]
-        val buffer = emu.getScreen()
-        val line = try {
-            buffer.getSelectedText(0, row, emu.mColumns, row)
-        } catch (_: Exception) {
-            return null
-        }
-        for (m in urlRegex.findAll(line)) {
-            if (col in m.range) return m.value to false
-        }
-        for (m in pathRegex.findAll(line)) {
-            if (col in m.range) {
-                val raw = m.value.trimEnd(' ', ',', ';', ':', ')', '(', '"', '\'', ']', '}', '!', '?', '.')
-                if (raw.length >= 2 && (raw.contains('/') || raw.startsWith("~/"))) return raw to true
-            }
-        }
-        return null
-    }
-
     override fun shouldBackButtonBeMappedToEscape(): Boolean = false
+
     override fun shouldEnforceCharBasedInput(): Boolean = true
     override fun shouldUseCtrlSpaceWorkaround(): Boolean = true
     override fun isTerminalViewSelected(): Boolean = true
@@ -173,14 +143,15 @@ class TerminalBackend(
 
     override fun readControlKey(): Boolean = ctrlDown
     override fun readAltKey(): Boolean = altDown
-    override fun readShiftKey(): Boolean = false
+    override fun readShiftKey(): Boolean = shiftDown
     override fun readFnKey(): Boolean = false
 
     fun setCtrl(v: Boolean) { ctrlDown = v }
     fun setAlt(v: Boolean) { altDown = v }
+    fun setShift(v: Boolean) { shiftDown = v }
 
     override fun onCodePoint(codePoint: Int, ctrlDown: Boolean, session: TerminalSession): Boolean {
-        if (this.ctrlDown || this.altDown) {
+        if (this.ctrlDown || this.altDown || this.shiftDown) {
             view.post { onModifierConsumed?.invoke() }
         }
         return false

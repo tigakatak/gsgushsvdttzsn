@@ -22,8 +22,7 @@ import com.redt.BuildConfig
 import com.redt.R
 import com.redt.distro.DistroInstaller
 import com.redt.service.TerminalService
-import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.Dispatchers
+import com.redt.session.terminalSessionStore
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -41,9 +40,13 @@ class SettingsActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings)
 
-        val prefs = prefs()
+        // Exit from the notification quits the app entirely; close Settings
+        // as well, even if it is the only activity alive in the task.
+        lifecycleScope.launch {
+            terminalSessionStore.exitSignal.collect { finishAffinity() }
+        }
 
-        findViewById<View>(R.id.settings_back_btn).setOnClickListener { finish() }
+        val prefs = prefs()
 
         val fontSlider = findViewById<SeekBar>(R.id.font_size_slider)
         val wakelockSwitch = findViewById<Switch>(R.id.wakelock_switch)
@@ -199,9 +202,10 @@ class SettingsActivity : AppCompatActivity() {
             try {
                 val json = org.json.JSONObject().apply {
                     put("theme", prefs.getString("theme", "amoled"))
-                    put("custom_bg", prefs.getInt("custom_bg", 0))
-                    put("custom_text", prefs.getInt("custom_text", 0))
-                    put("custom_primary", prefs.getInt("custom_primary", 0))
+                    put("custom_bg", prefs.getInt("custom_bg", 0xFF1E1E2E.toInt()))
+                    put("custom_text", prefs.getInt("custom_text", 0xFFCDD6F4.toInt()))
+                    put("custom_primary", prefs.getInt("custom_primary", 0xFF89B4FA.toInt()))
+                    put("custom_extra_bg", prefs.getInt("custom_extra_bg", 0xFF181825.toInt()))
                     put("font", prefs.getString("font", "monospace"))
                     put("font_size", prefs.getInt("font_size", 20))
                     put("scrollback", prefs.getInt("scrollback", 4))
@@ -232,9 +236,10 @@ class SettingsActivity : AppCompatActivity() {
                 val json = org.json.JSONObject(file.readText())
                 val edit = prefs.edit()
                 edit.putString("theme", json.optString("theme", "amoled"))
-                edit.putInt("custom_bg", json.optInt("custom_bg", 0))
-                edit.putInt("custom_text", json.optInt("custom_text", 0))
-                edit.putInt("custom_primary", json.optInt("custom_primary", 0))
+                edit.putInt("custom_bg", json.optInt("custom_bg", 0xFF1E1E2E.toInt()))
+                edit.putInt("custom_text", json.optInt("custom_text", 0xFFCDD6F4.toInt()))
+                edit.putInt("custom_primary", json.optInt("custom_primary", 0xFF89B4FA.toInt()))
+                edit.putInt("custom_extra_bg", json.optInt("custom_extra_bg", 0xFF181825.toInt()))
                 edit.putString("font", json.optString("font", "monospace"))
                 edit.putInt("font_size", json.optInt("font_size", 20))
                 edit.putInt("scrollback", json.optInt("scrollback", 4))
@@ -333,8 +338,7 @@ class SettingsActivity : AppCompatActivity() {
                     // trigger a spurious overwrite confirmation.
                     if (installer.isInstalled(distroName)) {
                         androidx.appcompat.app.AlertDialog.Builder(this)
-                            .setTitle("Overwrite $distroName?")
-                            .setMessage("The existing rootfs will be deleted and replaced.")
+                            .setMessage("The existing rootfs will be deleted and replaced. Any running session for it will be closed.")
                             .setPositiveButton("Overwrite") { _, _ ->
                                 restoreDistro(backupFile, distroName, rootfsDir)
                             }
@@ -350,44 +354,33 @@ class SettingsActivity : AppCompatActivity() {
 
         versionInfo.text = "${getString(R.string.app_name)} v${BuildConfig.VERSION_NAME}"
 
-        val tarballCacheBtn = findViewById<TextView>(R.id.tarball_cache_btn)
-        fun updateTarballCacheLabel() {
+        // Breakdown of this app's internal storage so the numbers can be
+        // compared against the system Settings "Storage" figure. Tarballs are
+        // deleted after every successful install now, so the download cache
+        // should normally be near zero (resume fragments and stale files are
+        // swept by DistroInstaller.sweepOrphanFiles).
+        val storageUsageBtn = findViewById<TextView>(R.id.storage_usage_text)
+        fun updateStorageUsageLabel() {
             lifecycleScope.launch(Dispatchers.IO) {
-                val size = installer.tarballCacheSize()
+                val context = applicationContext
+                val distroBytes = installer.getInstalledDistros().sumOf {
+                    com.redt.util.Format.dirSize(installer.getRootfsDir(it))
+                }
+                val cacheBytes = com.redt.util.Format.dirSize(File(context.filesDir, "tarballs"))
+                val fontBytes = com.redt.util.Format.dirSize(File(context.filesDir, "fonts"))
+                val total = distroBytes + cacheBytes + fontBytes
                 withContext(Dispatchers.Main) {
                     if (!isFinishing && !isDestroyed) {
-                        tarballCacheBtn.text = if (size > 0) {
-                            "Clear tarball cache (${com.redt.util.Format.size(size)})"
-                        } else {
-                            "Tarball cache (empty)"
-                        }
+                        storageUsageBtn.text =
+                            "Storage used: ${com.redt.util.Format.size(total)}  " +
+                                "(distros ${com.redt.util.Format.size(distroBytes)}, " +
+                                "download cache ${com.redt.util.Format.size(cacheBytes)}, " +
+                                "fonts ${com.redt.util.Format.size(fontBytes)})"
                     }
                 }
             }
         }
-        updateTarballCacheLabel()
-        tarballCacheBtn.setOnClickListener {
-            AlertDialog.Builder(this)
-                .setTitle("Clear tarball cache")
-                .setMessage("Cached base tarballs are used to reset a distro without re-downloading. Delete them to free space?")
-                .setPositiveButton("Clear") { _, _ ->
-                    lifecycleScope.launch(Dispatchers.IO) {
-                        val ok = installer.clearTarballCache()
-                        withContext(Dispatchers.Main) {
-                            if (!isFinishing && !isDestroyed) {
-                                Toast.makeText(
-                                    this@SettingsActivity,
-                                    if (ok) "Tarball cache cleared" else "Some cached files could not be removed",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                                updateTarballCacheLabel()
-                            }
-                        }
-                    }
-                }
-                .setNegativeButton("Cancel", null)
-                .show()
-        }
+        updateStorageUsageLabel()
 
         findViewById<TextView>(R.id.crash_logs_btn).setOnClickListener {
             val base = getExternalFilesDir(null) ?: filesDir
@@ -406,6 +399,8 @@ class SettingsActivity : AppCompatActivity() {
                 .setNegativeButton("Cancel", null)
                 .show()
         }
+
+        AppTheme.recolorCustomChrome(this)
     }
 
     private fun shareCrashLog(file: File) {
@@ -436,6 +431,9 @@ class SettingsActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             try {
+                // A restore replaces the rootfs wholesale: kill any running
+                // session for this distro first (same as deleteDistro).
+                terminalSessionStore.removeSessionsForDistro(distroName)
                 withContext(Dispatchers.IO) {
                     if (isBackup) {
                         installer.deleteRootfsSafe(rootfsDir)
@@ -461,7 +459,7 @@ class SettingsActivity : AppCompatActivity() {
                         }
                         com.redt.util.Format.invalidate(rootfsDir)
                         installer.saveInstalled(distroName)
-                        installer.repairRootfs(rootfsDir)
+                        installer.setupRootfs(rootfsDir)
                     } else {
                         installer.installFromFile(backupFile, distroName) {}
                     }
@@ -495,7 +493,8 @@ class SettingsActivity : AppCompatActivity() {
         val colors = intArrayOf(
             prefs.getInt("custom_bg", 0xFF1E1E2E.toInt()),
             prefs.getInt("custom_text", 0xFFCDD6F4.toInt()),
-            prefs.getInt("custom_primary", 0xFF89B4FA.toInt())
+            prefs.getInt("custom_primary", 0xFF89B4FA.toInt()),
+            prefs.getInt("custom_extra_bg", 0xFF181825.toInt())
         )
 
         val bgPreview = android.widget.TextView(this).apply {
@@ -513,6 +512,11 @@ class SettingsActivity : AppCompatActivity() {
             textSize = 16f
             setPadding(16, 16, 16, 16)
         }
+        val extraPreview = android.widget.TextView(this).apply {
+            text = "  Extra Keys  "
+            textSize = 16f
+            setPadding(16, 16, 16, 16)
+        }
 
         fun updatePreviews() {
             bgPreview.setBackgroundColor(colors[0])
@@ -521,6 +525,8 @@ class SettingsActivity : AppCompatActivity() {
             textPreview.setTextColor(colors[1])
             primaryPreview.setBackgroundColor(colors[0])
             primaryPreview.setTextColor(colors[2])
+            extraPreview.setBackgroundColor(colors[3])
+            extraPreview.setTextColor(colors[1])
         }
         updatePreviews()
 
@@ -589,6 +595,8 @@ class SettingsActivity : AppCompatActivity() {
             addView(makeColorPicker("Text", 1))
             addView(primaryPreview)
             addView(makeColorPicker("Primary", 2))
+            addView(extraPreview)
+            addView(makeColorPicker("Extra Keys", 3))
         }
         scroll.addView(container)
 
@@ -600,6 +608,7 @@ class SettingsActivity : AppCompatActivity() {
                     .putInt("custom_bg", colors[0])
                     .putInt("custom_text", colors[1])
                     .putInt("custom_primary", colors[2])
+                    .putInt("custom_extra_bg", colors[3])
                     .apply()
                 recreate()
             }

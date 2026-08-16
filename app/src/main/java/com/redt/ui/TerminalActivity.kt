@@ -89,30 +89,8 @@ class TerminalActivity : AppCompatActivity() {
 
     private fun wireBackend(backend: TerminalBackend) {
         backend.onSessionFinished = { finishedSession -> handleSessionFinished(finishedSession) }
-        backend.onLinkTap = { link, isPath -> handleLinkTap(link, isPath) }
         backend.onModifierConsumed = { consumeModifiers() }
         backend.onEmulatorReady = { applyEmulatorColors(backend.view) }
-    }
-
-    private fun handleLinkTap(link: String, isPath: Boolean) {
-        if (isPath) return
-        android.app.AlertDialog.Builder(this)
-            .setTitle(link)
-            .setItems(arrayOf("Open in browser", "Copy link")) { _, which ->
-                when (which) {
-                    0 -> {
-                        try {
-                            startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(
-                                if (link.startsWith("http")) link else "https://$link"
-                            )))
-                        } catch (_: Exception) {
-                            Toast.makeText(this, "No browser available", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                    else -> copyText(link)
-                }
-            }
-            .show()
     }
 
     private fun copyText(text: String) {
@@ -200,7 +178,10 @@ class TerminalActivity : AppCompatActivity() {
         observeSessions()
         lifecycleScope.launch {
             sessionStore.exitSignal.collect {
-                navigateToMainMenu()
+                // Exit from the notification means "quit RedT entirely":
+                // close every activity in the task, not just this screen.
+                exitingApp = true
+                finishAffinity()
             }
         }
         if (sessions.isEmpty()) {
@@ -228,6 +209,7 @@ class TerminalActivity : AppCompatActivity() {
             }
             updateDrawer()
         }
+        AppTheme.recolorCustomChrome(this)
     }
 
     private fun ensureTerminalBackend(): TerminalBackend =
@@ -237,6 +219,7 @@ class TerminalActivity : AppCompatActivity() {
             wireBackend(it)
         }
 
+    private var exitingApp = false
     private var sawActiveSession = false
 
     private fun observeSessions() {
@@ -257,13 +240,14 @@ class TerminalActivity : AppCompatActivity() {
                         // previously held sessions (the very first emission is
                         // empty too). onSessionFinished races with the store
                         // update, so decide navigation here, not in the callback.
-                        if (sawActiveSession) {
+                        if (sawActiveSession && !exitingApp) {
                             navigateToMainMenu()
                         }
                         updateDrawer()
                         return@collect
                     }
                     sawActiveSession = true
+                    clearErrorOverlay()
                     val safeIndex = index.coerceIn(active.indices)
                     if (terminalView.mTermSession !== active[safeIndex]) {
                         terminalView.attachSession(active[safeIndex])
@@ -372,9 +356,9 @@ class TerminalActivity : AppCompatActivity() {
             "\u2630" to { toggleSessionsPanel() },
             "MENU" to { toggleSessionsPanel() },
             "ESC" to { session?.writeCodePoint(false, 27); Unit },
-            "TAB" to { session?.writeCodePoint(false, 9); Unit },
-            "CTRL" to { toggleCtrl() },
             "ALT" to { toggleAlt() },
+            "SHIFT" to { toggleShift() },
+            "CTRL" to { toggleCtrl() },
             "\u25B2" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_UP, currentKeyMod()); Unit },
             "UP" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_UP, currentKeyMod()); Unit },
             "\u25BC" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_DOWN, currentKeyMod()); Unit },
@@ -396,7 +380,7 @@ class TerminalActivity : AppCompatActivity() {
                 session?.write(label)
                 Unit
             }
-        if (label == "CTRL" || label == "ALT") return action
+        if (label == "CTRL" || label == "ALT" || label == "SHIFT") return action
         return {
             if (session != null || label == "\u2630" || label == "MENU") {
                 action()
@@ -409,6 +393,7 @@ class TerminalActivity : AppCompatActivity() {
         var mod = 0
         if (ctrlActive) mod = mod or com.termux.terminal.KeyHandler.KEYMOD_CTRL
         if (altActive) mod = mod or com.termux.terminal.KeyHandler.KEYMOD_ALT
+        if (shiftActive) mod = mod or com.termux.terminal.KeyHandler.KEYMOD_SHIFT
         return mod
     }
 
@@ -426,8 +411,27 @@ class TerminalActivity : AppCompatActivity() {
         }
     }
 
+    private var appliedExtraKeyLabels: Pair<List<String>, List<String>>? = null
+
+    /**
+     * Rebuilds the extra key rows when their configuration changed while this
+     * activity was stopped (e.g. edited in Settings). The rows are otherwise
+     * only built once when the pager creates its pages.
+     */
+    private fun syncExtraKeysRows() {
+        val labels = extraKeyLabels()
+        if (labels == appliedExtraKeyLabels) return
+        appliedExtraKeyLabels = labels
+        row1Container?.removeAllViews()
+        row2Container?.removeAllViews()
+        setupExtraKeysRow1()
+        setupExtraKeysRow2()
+        updateModifierButtons()
+    }
+
     private var ctrlActive = false
     private var altActive = false
+    private var shiftActive = false
     private var lastImeVisible = false
 
     private fun toggleCtrl() {
@@ -442,12 +446,20 @@ class TerminalActivity : AppCompatActivity() {
         updateModifierButtons()
     }
 
+    private fun toggleShift() {
+        shiftActive = !shiftActive
+        terminalBackend?.setShift(shiftActive)
+        updateModifierButtons()
+    }
+
     private fun consumeModifiers() {
-        if (!ctrlActive && !altActive) return
+        if (!ctrlActive && !altActive && !shiftActive) return
         ctrlActive = false
         altActive = false
+        shiftActive = false
         terminalBackend?.setCtrl(false)
         terminalBackend?.setAlt(false)
+        terminalBackend?.setShift(false)
         updateModifierButtons()
     }
 
@@ -459,6 +471,7 @@ class TerminalActivity : AppCompatActivity() {
                 when (btn.text) {
                     "CTRL" -> btn.setBackgroundColor(if (ctrlActive) modifierHighlightColor() else 0)
                     "ALT" -> btn.setBackgroundColor(if (altActive) modifierHighlightColor() else 0)
+                    "SHIFT" -> btn.setBackgroundColor(if (shiftActive) modifierHighlightColor() else 0)
                 }
             }
         }
@@ -557,7 +570,9 @@ class TerminalActivity : AppCompatActivity() {
     }
 
     private fun closeSession(index: Int) {
-        if (sessions.size <= 1) return
+        // Closing the last session is allowed: the store becomes empty and
+        // observeSessions() navigates back to the main menu, exactly like
+        // typing `exit` in the shell (README §5.3).
         sessionStore.removeSession(index)
         if (currentIndex in sessions.indices) {
             terminalView.attachSession(sessions[currentIndex])
@@ -719,16 +734,26 @@ class TerminalActivity : AppCompatActivity() {
         terminalView.mEmulator?.paste(text)
     }
 
+    private var errorOverlay: TextView? = null
+
     private fun showError(msg: String) {
         terminalView.visibility = android.view.View.GONE
         val parent = terminalView.parent as? android.view.ViewGroup ?: return
+        clearErrorOverlay()
         val tv = TextView(this).apply {
             text = msg
             setTextColor(themeColor(R.attr.terminalText, 0xFFCDD6F4.toInt()))
             textSize = 14f
             setPadding(dp(24), dp(24), dp(24), dp(24))
         }
+        errorOverlay = tv
         parent.addView(tv)
+    }
+
+    private fun clearErrorOverlay() {
+        errorOverlay?.let { (it.parent as? android.view.ViewGroup)?.removeView(it) }
+        errorOverlay = null
+        terminalView.visibility = android.view.View.VISIBLE
     }
 
     private fun startForegroundService() {
@@ -744,10 +769,14 @@ class TerminalActivity : AppCompatActivity() {
         com.redt.util.AppLock.requireUnlock(this, prefs()) {}
         val currentTheme = prefs().getString(Prefs.KEY_THEME, "amoled")
         if (lastAppliedTheme != null && lastAppliedTheme != currentTheme) {
-            applyTheme()
-            applyTerminalColors()
+            // Theme changed while this activity was stopped (e.g. in Settings):
+            // setTheme() cannot restyle existing views, rebuild instead.
+            lastAppliedTheme = currentTheme
+            if (!isFinishing && !isDestroyed) recreate()
+            return
         }
         lastAppliedTheme = currentTheme
+        syncExtraKeysRows()
         sendServiceAction(TerminalService.ACTION_AUTO_RELEASE)
         if (!com.redt.util.StoragePermission.isAccessible()) {
             val prefs = prefs()
@@ -769,6 +798,10 @@ class TerminalActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
+        // Packages installed inside the guest change the rootfs while this
+        // screen is open; drop the size cache so the next label recomputes
+        // instead of showing a value up to the cache TTL stale.
+        com.redt.util.Format.invalidate(DistroInstaller(applicationContext).getRootfsDir(distroName))
         if (sessions.isNotEmpty()) {
             sendServiceAction(TerminalService.ACTION_AUTO_WAKE)
         }
@@ -804,7 +837,6 @@ class TerminalActivity : AppCompatActivity() {
         terminalBackend?.let {
             sessionStore.detachClient(it)
             it.onSessionFinished = null
-            it.onLinkTap = null
             it.onModifierConsumed = null
             it.onEmulatorReady = null
         }
@@ -821,11 +853,10 @@ class TerminalActivity : AppCompatActivity() {
         }
         return super.dispatchTouchEvent(ev)
     }
-
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (currentFocus is android.widget.EditText) return super.dispatchKeyEvent(event)
         if (currentIndex !in sessions.indices) return super.dispatchKeyEvent(event)
-        val hadModifier = ctrlActive || altActive
+        val hadModifier = ctrlActive || altActive || shiftActive
         @Suppress("DEPRECATION")
         val handled = when (event.action) {
             KeyEvent.ACTION_DOWN -> terminalView.onKeyDown(event.keyCode, event) || super.dispatchKeyEvent(event)
@@ -877,20 +908,12 @@ class TerminalActivity : AppCompatActivity() {
     }
 
     private fun resolveTerminalColors(): Triple<Int, Int, Int> {
+        // resolveThemeColor is custom-aware: for the custom theme it returns
+        // custom_bg / custom_extra_bg / custom_text directly.
         val prefs = prefs()
-        val themeName = prefs.getString("theme", "amoled") ?: "amoled"
-        val bg = if (themeName == "custom")
-            prefs.getInt("custom_bg", 0xFF1E1E2E.toInt())
-        else
-            AppTheme.resolveThemeColor(this, prefs, R.attr.terminalBg, 0xFF1E1E2E.toInt())
-        val extraBg = if (themeName == "custom")
-            prefs.getInt("custom_bg", 0xFF0A0A0A.toInt())
-        else
-            AppTheme.resolveThemeColor(this, prefs, R.attr.extraKeysBg, 0xFF181825.toInt())
-        val textColor = if (themeName == "custom")
-            prefs.getInt("custom_text", 0xFFCDD6F4.toInt())
-        else
-            AppTheme.resolveThemeColor(this, prefs, R.attr.terminalText, 0xFFCDD6F4.toInt())
+        val bg = AppTheme.resolveThemeColor(this, prefs, R.attr.terminalBg, 0xFF1E1E2E.toInt())
+        val extraBg = AppTheme.resolveThemeColor(this, prefs, R.attr.extraKeysBg, 0xFF181825.toInt())
+        val textColor = AppTheme.resolveThemeColor(this, prefs, R.attr.terminalText, 0xFFCDD6F4.toInt())
         return Triple(bg, extraBg, textColor)
     }
 
@@ -913,11 +936,11 @@ class TerminalActivity : AppCompatActivity() {
     }
 
     private fun applyTerminalTheme(themeName: String) {
-        val prefs = prefs()
-        prefs.edit().putString("theme", themeName).apply()
-        lastAppliedTheme = themeName
-        applyTheme()
-        applyTerminalColors()
+        prefs().edit().putString("theme", themeName).apply()
+        // setTheme() after onCreate cannot restyle already-inflated views;
+        // rebuild the activity so XML chrome and every programmatic view pick
+        // up the new theme. Sessions live in the session store and survive.
+        if (!isFinishing && !isDestroyed) recreate()
     }
 
     private fun applyTerminalColors() {
@@ -935,7 +958,7 @@ class TerminalActivity : AppCompatActivity() {
         }
         inputField?.apply {
             setTextColor(textColor)
-            setHintTextColor(textColor)
+            setHintTextColor(hintColor())
         }
         applyEmulatorColors(terminalView)
     }

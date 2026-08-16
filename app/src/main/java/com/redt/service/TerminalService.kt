@@ -130,6 +130,9 @@ class TerminalService : Service() {
                 exiting = true
                 sessionStore.signalExit()
                 finishAllSessions()
+                // The widget shows a live session count; refresh it before
+                // stopping, otherwise it keeps a stale "Tap to resume".
+                RedTWidgetProvider.updateAll(this)
                 releaseWakeLock()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()

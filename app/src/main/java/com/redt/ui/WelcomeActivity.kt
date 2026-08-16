@@ -16,6 +16,7 @@ import com.redt.distro.Distro
 import com.redt.distro.DistroInstaller
 import com.redt.distro.DistroRegistry
 import com.redt.proot.ProotInstaller
+import com.redt.session.terminalSessionStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -32,7 +33,10 @@ class WelcomeActivity : AppCompatActivity() {
     private var selectedCard: MaterialCardView? = null
     private var installJob: Job? = null
     private var isInstalling = false
-
+    private var prootReady = true
+    private var selectOnly = false
+    private var navigatedAway = false
+    private var lastAppliedTheme: String? = null
     private lateinit var distroList: LinearLayout
     private lateinit var installButton: Button
     private lateinit var cancelButton: Button
@@ -46,8 +50,15 @@ class WelcomeActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         AppTheme.apply(this)
+        lastAppliedTheme = prefs().getString(Prefs.KEY_THEME, "amoled")
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_welcome)
+
+        // Exit from the notification quits the app entirely; close this
+        // activity too (it may be the only one in the task during setup).
+        lifecycleScope.launch {
+            terminalSessionStore.exitSignal.collect { finishAffinity() }
+        }
 
         val prefs = prefs()
         if (com.redt.util.AppLock.isUnlocked(prefs)) {
@@ -58,8 +69,7 @@ class WelcomeActivity : AppCompatActivity() {
     }
 
     private fun finishSetup() {
-        val selectOnly = intent?.getBooleanExtra(EXTRA_SELECT_ONLY, false) ?: false
-
+        selectOnly = intent?.getBooleanExtra(EXTRA_SELECT_ONLY, false) ?: false
         if (!selectOnly && hasInstalledDistro()) {
             navigateToMain()
             return
@@ -81,6 +91,7 @@ class WelcomeActivity : AppCompatActivity() {
             val ok = withContext(Dispatchers.IO) {
                 ProotInstaller.isInstalled(this@WelcomeActivity)
             }
+            prootReady = ok
             if (!ok) {
                 installButton.isEnabled = false
                 installButton.text = getString(R.string.proot_extraction_failed)
@@ -107,6 +118,8 @@ class WelcomeActivity : AppCompatActivity() {
             val distro = selectedDistro ?: return@setOnClickListener
             startInstall(distro)
         }
+
+        AppTheme.recolorCustomChrome(this)
     }
 
     private fun refreshDistroStates() {
@@ -142,8 +155,10 @@ class WelcomeActivity : AppCompatActivity() {
                 selectedCard?.setCardBackgroundColor(themeColor(R.attr.extraKeysBg, 0xFF181825.toInt()))
                 selectedCard?.strokeWidth = 0
                 selectedDistro = distro
-                installButton.isEnabled = true
-                installButton.text = getString(R.string.install)
+                installButton.isEnabled = prootReady
+                installButton.text =
+                    if (prootReady) getString(R.string.install)
+                    else getString(R.string.proot_extraction_failed)
                 installButton.visibility = android.view.View.VISIBLE
                 retryButton.visibility = android.view.View.GONE
                 cancelButton.visibility = android.view.View.GONE
@@ -238,6 +253,8 @@ class WelcomeActivity : AppCompatActivity() {
         cancelButton.visibility = android.view.View.VISIBLE
         progressGroup.visibility = android.view.View.VISIBLE
         progressText.text = "Installing ${distro.displayName}..."
+        progressText.setTextColor(themeColor(R.attr.terminalText, 0xFFCDD6F4.toInt()))
+        progressBar.visibility = android.view.View.VISIBLE
         progressBar.isIndeterminate = false
         progressBar.progress = 0
 
@@ -246,16 +263,14 @@ class WelcomeActivity : AppCompatActivity() {
                 refreshDistroStates()
                 installer.install(distro) { progress ->
                     runOnUiThread {
-                        try {
-                            if (progress.percent < 0) {
-                                progressBar.isIndeterminate = true
-                                progressText.text = progress.speed
-                            } else {
-                                progressBar.isIndeterminate = false
-                                progressBar.progress = progress.percent
-                                progressText.text = "${progress.percent}% - ${progress.speed}"
-                            }
-                        } catch (_: Exception) {}
+                        if (progress.percent < 0) {
+                            progressBar.isIndeterminate = true
+                            progressText.text = progress.speed
+                        } else {
+                            progressBar.isIndeterminate = false
+                            progressBar.progress = progress.percent
+                            progressText.text = "${progress.percent}% - ${progress.speed}"
+                        }
                     }
                 }
                 runOnUiThread {
@@ -264,7 +279,7 @@ class WelcomeActivity : AppCompatActivity() {
                     cancelButton.visibility = android.view.View.GONE
                     refreshDistroStates()
                     Toast.makeText(this@WelcomeActivity, "${distro.displayName} installed", Toast.LENGTH_SHORT).show()
-                    navigateToMain()
+                    if (selectOnly) finish() else navigateToMain()
                 }
             } catch (e: DistroInstaller.CancelledException) {
                 runOnUiThread {
@@ -277,6 +292,12 @@ class WelcomeActivity : AppCompatActivity() {
                     refreshDistroStates()
                     Toast.makeText(this@WelcomeActivity, "Installation cancelled", Toast.LENGTH_SHORT).show()
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // installJob.cancel() (cancel button) or onDestroy: the UI was
+                // already reset synchronously by cancelInstall(). Re-throwing
+                // keeps the coroutine cancelled instead of showing a spurious
+                // "Install failed" state.
+                throw e
             } catch (e: Throwable) {
                 runOnUiThread {
                     isInstalling = false
@@ -313,13 +334,25 @@ class WelcomeActivity : AppCompatActivity() {
     }
 
     private fun navigateToMain() {
+        // finishSetup (onCreate) and onResume both check hasInstalledDistro();
+        // guard so a fresh launch does not push two MainActivity instances.
+        if (navigatedAway) return
+        navigatedAway = true
         startActivity(Intent(this, MainActivity::class.java))
         finish()
     }
 
     override fun onResume() {
         super.onResume()
-        val selectOnly = intent?.getBooleanExtra(EXTRA_SELECT_ONLY, false) ?: false
+        val currentTheme = prefs().getString(Prefs.KEY_THEME, "amoled")
+        if (lastAppliedTheme != null && lastAppliedTheme != currentTheme) {
+            lastAppliedTheme = currentTheme
+            // Theme changed in Settings: setTheme() cannot restyle existing
+            // views, rebuild instead. Never recreate while an install runs:
+            // onDestroy would cancel the install job.
+            if (!isInstalling && !isFinishing && !isDestroyed) recreate()
+            return
+        }
         if (!selectOnly && !isInstalling && hasInstalledDistro()) {
             navigateToMain()
             return

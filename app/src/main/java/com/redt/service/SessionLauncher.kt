@@ -170,7 +170,7 @@ exec "$prootBin" -0 -L -r "$rootfsPath" -w /root --link2symlink --sysvipc --ashm
             val rootDir = File(rootfsDir, "root").apply { mkdirs() }
             val isNew = !File(rootDir, ".init_done").exists()
             val bashrc = File(rootDir, ".bashrc")
-            if (isNew || !bashrc.exists()) {
+            if (!bashrc.exists()) {
                 bashrc.writeText("""# ~/.bashrc
 export TERM=xterm-256color
 stty erase ^?
@@ -190,10 +190,12 @@ alias mv='mv -i'
 """)
             }
             val startup = File(rootDir, ".startup")
-            val startupScript = """if [ ! -f /root/.init_done ] || ! command -v nano >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1; then
+            val startupScript = """has_bash() { command -v bash >/dev/null 2>&1; }
+has_ca() { command -v update-ca-certificates >/dev/null 2>&1 || command -v update-ca-trust >/dev/null 2>&1; }
+if [ ! -f /root/.init_done ] || ! has_bash || ! has_ca; then
     echo '>>> First-time distro setup...'
-    if $update 2>/root/.setup_error.log && ${prereqCmd}$install $quiet nano wget bash openssl ca-certificates 2>>/root/.setup_error.log; then
-        if command -v nano >/dev/null 2>&1 && command -v openssl >/dev/null 2>&1; then
+    if $update 2>/root/.setup_error.log && ${prereqCmd}$install $quiet bash ca-certificates 2>>/root/.setup_error.log; then
+        if has_bash && has_ca; then
             touch /root/.init_done
             echo '>>> Setup complete.'
         else
@@ -203,7 +205,7 @@ alias mv='mv -i'
     else
         echo '>>> Setup was interrupted or failed - starting a repair shell.'
         echo '>>> Details: /root/.setup_error.log'
-        echo ">>> Run manually: $update && ${prereqCmd}$install $quiet nano wget bash openssl ca-certificates"
+        echo ">>> Run manually: $update && ${prereqCmd}$install $quiet bash ca-certificates"
     fi
 fi
 if command -v bash >/dev/null 2>&1; then

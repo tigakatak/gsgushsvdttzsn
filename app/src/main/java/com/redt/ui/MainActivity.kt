@@ -12,7 +12,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.card.MaterialCardView
 import com.redt.R
-import com.redt.distro.DistroInstaller
+import com.redt.session.terminalSessionStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -28,9 +28,17 @@ class MainActivity : AppCompatActivity() {
         lastAppliedTheme = prefs().getString(Prefs.KEY_THEME, "amoled")
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        // Exit from the notification quits the app entirely: this collector is
+        // unconditional (not lifecycle-repeatable) so it also fires while the
+        // activity is stopped in the background. finishAffinity() closes every
+        // activity in the task, including Settings stacked on top of this one.
+        lifecycleScope.launch {
+            sessionStore.exitSignal.collect {
+                finishAffinity()
+            }
+        }
 
         populateDistroList()
-
         findViewById<ImageButton>(R.id.main_back_btn).setOnClickListener { finish() }
 
         val onSettings = { startActivity(Intent(this, SettingsActivity::class.java)) }
@@ -59,6 +67,14 @@ class MainActivity : AppCompatActivity() {
                 putExtra(WelcomeActivity.EXTRA_SELECT_ONLY, true)
             })
         }
+
+        // Clean up disk usage not owned by any visible feature: rootfs husks
+        // from interrupted uninstalls and stale download files.
+        lifecycleScope.launch(Dispatchers.IO) {
+            installer.sweepOrphanFiles()
+        }
+
+        AppTheme.recolorCustomChrome(this)
     }
 
     private fun populateDistroList() {
@@ -157,7 +173,7 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("Reset") { _, _ ->
                 val dialog = AlertDialog.Builder(this)
                     .setTitle("Resetting $name")
-                    .setMessage("Restoring base files...")
+                    .setMessage("Restoring base files (downloads the base image if needed)...")
                     .setCancelable(false)
                     .show()
                 lifecycleScope.launch(Dispatchers.IO) {
@@ -220,7 +236,11 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         val current = prefs().getString(Prefs.KEY_THEME, "amoled")
         if (lastAppliedTheme != null && lastAppliedTheme != current) {
-            AppTheme.apply(this)
+            // Theme changed while this activity was stopped (e.g. in Settings):
+            // setTheme() cannot restyle existing views, rebuild instead.
+            lastAppliedTheme = current
+            if (!isFinishing && !isDestroyed) recreate()
+            return
         }
         lastAppliedTheme = current
         com.redt.util.AppLock.requireUnlock(this, prefs()) { populateDistroList() }
