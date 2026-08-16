@@ -34,7 +34,7 @@ class MainActivity : AppCompatActivity() {
         // activity is stopped in the background. finishAffinity() closes every
         // activity in the task, including Settings stacked on top of this one.
         lifecycleScope.launch {
-            sessionStore.exitSignal.collect {
+            terminalSessionStore.exitSignal.collect {
                 finishAffinity()
             }
         }
