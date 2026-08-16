@@ -1075,15 +1075,15 @@ class DistroInstaller(private val context: Context) {
     suspend fun uninstall(distroName: String) {
         val validName = validateDistroName(distroName)
         val dir = getRootfsDir(validName)
-        // A proot session for this distro may still be tearing down and hold
-        // directories as its cwd: retry with growing backoff (up to ~1 minute)
-        // before giving up. A leftover husk is picked up by sweepOrphanFiles
-        // on the next app start.
+        // Give a dying proot session a moment to release its cwd, then retry
+        // briefly. A husk that survives this is swept by sweepOrphanFiles on
+        // the next app start, so waiting long here would only slow the UI.
+        kotlinx.coroutines.delay(300)
         var attempts = 0
-        while (dir.exists() && attempts < 20) {
+        while (dir.exists() && attempts < 4) {
             deleteRootfsSafe(dir)
             attempts++
-            if (dir.exists()) kotlinx.coroutines.delay(300L * (attempts + 1))
+            if (dir.exists()) kotlinx.coroutines.delay(400L * attempts)
         }
         if (dir.exists()) {
             Log.w("DistroInstaller", "Rootfs for $validName not fully removed; startup sweep will retry")
