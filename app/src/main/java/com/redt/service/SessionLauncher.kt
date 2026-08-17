@@ -129,11 +129,9 @@ exec "$prootBin" -0 -L -r "$rootfsPath" -w /root --link2symlink --sysvipc --ashm
             val distro = when {
                 osRelease.contains("Alpine", ignoreCase = true) -> "alpine"
                 osRelease.contains("Ubuntu", ignoreCase = true) -> "ubuntu"
-                osRelease.contains("Kali", ignoreCase = true) -> "kali"
                 osRelease.contains("Debian", ignoreCase = true) -> "debian"
                 File(rootfsDir, "etc/fedora-release").exists() ||
                     osRelease.contains("Fedora", ignoreCase = true) -> "fedora"
-                osRelease.contains("Void", ignoreCase = true) -> "void"
                 osRelease.contains("Manjaro", ignoreCase = true) -> "manjaro"
                 osRelease.contains("Arch Linux", ignoreCase = true) -> "arch"
                 osRelease.contains("Artix", ignoreCase = true) -> "artix"
@@ -144,7 +142,7 @@ exec "$prootBin" -0 -L -r "$rootfsPath" -w /root --link2symlink --sysvipc --ashm
             }
             val (update, install, quiet) = when (distro) {
                 "alpine" -> Triple("apk update", "apk add", "-q")
-                "debian", "ubuntu", "kali" -> Triple(
+                "debian", "ubuntu" -> Triple(
                     "apt-get update -qq",
                     "DEBIAN_FRONTEND=noninteractive apt-get install -y",
                     "-qq",
@@ -152,7 +150,6 @@ exec "$prootBin" -0 -L -r "$rootfsPath" -w /root --link2symlink --sysvipc --ashm
                 "fedora", "rocky", "almalinux" -> Triple(
                     "dnf check-update || true", "dnf install -y", "-q"
                 )
-                "void" -> Triple("xbps-install -S", "xbps-install -Sy", "")
                 "arch", "artix" -> Triple(
                     "pacman -Syy --noconfirm",
                     "pacman -S --noconfirm --needed glibc gcc-libs",
@@ -162,7 +159,7 @@ exec "$prootBin" -0 -L -r "$rootfsPath" -w /root --link2symlink --sysvipc --ashm
                 else -> Triple(":", "false", "")
             }
             val prereq = when (distro) {
-                "debian", "ubuntu", "kali" -> "gawk"
+                "debian", "ubuntu" -> "gawk"
                 else -> ""
             }
             val prereqCmd = if (prereq.isNotEmpty()) "$install $quiet $prereq 2>>/root/.setup_error.log && " else ""
