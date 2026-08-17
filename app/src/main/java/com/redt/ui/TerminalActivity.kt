@@ -356,6 +356,7 @@ class TerminalActivity : AppCompatActivity() {
             "\u2630" to { toggleSessionsPanel() },
             "MENU" to { toggleSessionsPanel() },
             "ESC" to { session?.writeCodePoint(false, 27); Unit },
+            "TAB" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_TAB, currentKeyMod()); Unit },
             "ALT" to { toggleAlt() },
             "SHIFT" to { toggleShift() },
             "CTRL" to { toggleCtrl() },
