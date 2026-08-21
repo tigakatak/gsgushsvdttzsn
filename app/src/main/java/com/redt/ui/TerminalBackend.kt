@@ -25,7 +25,9 @@ class TerminalBackend(
     private var ctrlDown = false
     private var altDown = false
     private var shiftDown = false
-    private var fontSize = context.prefs().getInt(Prefs.KEY_FONT_SIZE, Prefs.FONT_SIZE_DEFAULT).toFloat()
+    private var fontSize = context.prefs()
+        .getInt(Prefs.KEY_FONT_SIZE, Prefs.FONT_SIZE_DEFAULT)
+        .coerceIn(Prefs.FONT_SIZE_MIN, Prefs.FONT_SIZE_MAX).toFloat()
     var onSessionFinished: ((TerminalSession) -> Unit)? = null
     var onModifierConsumed: (() -> Unit)? = null
     var onEmulatorReady: (() -> Unit)? = null
@@ -69,7 +71,7 @@ class TerminalBackend(
     override fun getTerminalCursorStyle(): Int? = null
 
     override fun onScale(scale: Float): Float {
-        fontSize = (fontSize * scale).coerceIn(8f, 36f)
+        fontSize = (fontSize * scale).coerceIn(Prefs.FONT_SIZE_MIN.toFloat(), Prefs.FONT_SIZE_MAX.toFloat())
         val size = fontSize.roundToInt()
         view.setTextSize(size)
         // Persist once, after the pinch gesture settles, instead of writing
@@ -84,15 +86,10 @@ class TerminalBackend(
     }
 
     fun applyFontSize() {
-        fontSize = context.prefs().getInt(Prefs.KEY_FONT_SIZE, Prefs.FONT_SIZE_DEFAULT).toFloat()
+        fontSize = context.prefs()
+            .getInt(Prefs.KEY_FONT_SIZE, Prefs.FONT_SIZE_DEFAULT)
+            .coerceIn(Prefs.FONT_SIZE_MIN, Prefs.FONT_SIZE_MAX).toFloat()
         view.setTextSize(fontSize.roundToInt())
-    }
-
-    fun setFontSize(size: Int) {
-        val clamped = size.coerceIn(8, 36)
-        fontSize = clamped.toFloat()
-        context.prefs().edit().putInt(Prefs.KEY_FONT_SIZE, clamped).apply()
-        view.setTextSize(clamped)
     }
 
     override fun onSingleTapUp(e: MotionEvent) {

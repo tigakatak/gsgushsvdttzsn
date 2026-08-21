@@ -138,6 +138,7 @@
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
                         android:max="40"
+                        android:min="8"
                         android:progress="14"
                         android:layout_marginHorizontal="8dp" />
 

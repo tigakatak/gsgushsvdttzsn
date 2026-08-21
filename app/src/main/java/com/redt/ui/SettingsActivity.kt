@@ -52,7 +52,7 @@ class SettingsActivity : AppCompatActivity() {
         wakelockSwitch.isChecked = prefs.getBoolean(Prefs.KEY_WAKELOCK, Prefs.WAKELOCK_DEFAULT)
 
         fontSlider.setOnSeekBarChangeListener(simpleSeekBarListener { progress ->
-            prefs.edit().putInt(Prefs.KEY_FONT_SIZE, progress).apply()
+            prefs.edit().putInt(Prefs.KEY_FONT_SIZE, progress.coerceIn(Prefs.FONT_SIZE_MIN, Prefs.FONT_SIZE_MAX)).apply()
         })
 
         wakelockSwitch.setOnCheckedChangeListener { _, isChecked ->

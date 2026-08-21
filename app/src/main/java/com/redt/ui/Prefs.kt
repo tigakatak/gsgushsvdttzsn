@@ -15,6 +15,8 @@ object Prefs {
 
     const val SCROLLBACK_DEFAULT = 4
     const val FONT_SIZE_DEFAULT = 20
+    const val FONT_SIZE_MIN = 8
+    const val FONT_SIZE_MAX = 40
     const val OPACITY_DEFAULT = 10
     const val PERMISSION_ASK_THROTTLE_MS = 8000L
     const val KEY_REPEAT_INITIAL_DELAY = 400L
