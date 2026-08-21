@@ -36,7 +36,6 @@ class WelcomeActivity : AppCompatActivity() {
     private var prootReady = true
     private var selectOnly = false
     private var navigatedAway = false
-    private var lastAppliedTheme: String? = null
     private lateinit var distroList: LinearLayout
     private lateinit var installButton: Button
     private lateinit var cancelButton: Button
@@ -50,7 +49,6 @@ class WelcomeActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         AppTheme.apply(this)
-        lastAppliedTheme = prefs().getString(Prefs.KEY_THEME, "amoled")
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_welcome)
 
@@ -60,12 +58,7 @@ class WelcomeActivity : AppCompatActivity() {
             terminalSessionStore.exitSignal.collect { finishAffinity() }
         }
 
-        val prefs = prefs()
-        if (com.redt.util.AppLock.isUnlocked(prefs)) {
-            finishSetup()
-        } else {
-            com.redt.util.AppLock.requireUnlock(this, prefs) { finishSetup() }
-        }
+        finishSetup()
     }
 
     private fun finishSetup() {
@@ -119,7 +112,6 @@ class WelcomeActivity : AppCompatActivity() {
             startInstall(distro)
         }
 
-        AppTheme.recolorCustomChrome(this)
     }
 
     private fun refreshDistroStates() {
@@ -344,15 +336,6 @@ class WelcomeActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        val currentTheme = prefs().getString(Prefs.KEY_THEME, "amoled")
-        if (lastAppliedTheme != null && lastAppliedTheme != currentTheme) {
-            lastAppliedTheme = currentTheme
-            // Theme changed in Settings: setTheme() cannot restyle existing
-            // views, rebuild instead. Never recreate while an install runs:
-            // onDestroy would cancel the install job.
-            if (!isInstalling && !isFinishing && !isDestroyed) recreate()
-            return
-        }
         if (!selectOnly && !isInstalling && hasInstalledDistro()) {
             navigateToMain()
             return

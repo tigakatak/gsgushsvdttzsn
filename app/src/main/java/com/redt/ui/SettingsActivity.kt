@@ -2,15 +2,12 @@ package com.redt.ui
 
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
-import android.widget.ArrayAdapter
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.SeekBar
-import android.widget.Spinner
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
@@ -33,10 +30,6 @@ class SettingsActivity : AppCompatActivity() {
 
     private val installer by lazy { DistroInstaller(applicationContext) }
 
-    companion object {
-        private const val REQ_IMPORT_FONT = 2001
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         AppTheme.apply(this)
         super.onCreate(savedInstanceState)
@@ -53,71 +46,6 @@ class SettingsActivity : AppCompatActivity() {
         val fontSlider = findViewById<SeekBar>(R.id.font_size_slider)
         val wakelockSwitch = findViewById<Switch>(R.id.wakelock_switch)
         val versionInfo = findViewById<TextView>(R.id.version_info)
-        val fontSpinner = findViewById<Spinner>(R.id.font_spinner)
-
-        val currentTheme = prefs.getString(Prefs.KEY_THEME, "amoled")
-        val themeNames = Prefs.THEME_NAMES
-        val themeValues = Prefs.THEME_VALUES
-        val themeSpinner = findViewById<Spinner>(R.id.theme_spinner)
-        val themeIdx = (themeValues.indexOf(currentTheme)).coerceAtLeast(0)
-        themeSpinner.adapter = makeCheckedSpinnerAdapter(themeNames, themeSpinner)
-        themeSpinner.setSelection(themeIdx)
-        themeSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(p: android.widget.AdapterView<*>?, v: View?, pos: Int, id: Long) {
-                if (pos != themeIdx) {
-                    prefs.edit().putString("theme", themeValues[pos]).apply()
-                    findViewById<TextView>(R.id.customize_theme_btn).visibility =
-                        if (themeValues[pos] == "custom") android.view.View.VISIBLE else android.view.View.GONE
-                    recreate()
-                }
-            }
-            override fun onNothingSelected(p: android.widget.AdapterView<*>?) {}
-        }
-
-        findViewById<TextView>(R.id.customize_theme_btn).apply {
-            setOnClickListener { showColorPickerDialog(prefs) }
-            visibility = if (currentTheme == "custom") android.view.View.VISIBLE else android.view.View.GONE
-        }
-
-        val customFonts = customFontFiles().map { it.name }
-        val fonts = Prefs.BUILT_IN_FONTS + customFonts.map { "custom:$it" }
-        val fontLabels = fonts.map { if (it.startsWith("custom:")) "${fontDisplayName(it.removePrefix("custom:"))} (custom)" else it }
-        val currentFont = prefs.getString(Prefs.KEY_FONT, "monospace")
-        val fontIdx = (fonts.indexOf(currentFont)).coerceAtLeast(0)
-        fontSpinner.adapter = makeCheckedSpinnerAdapter(fontLabels, fontSpinner)
-        fontSpinner.setSelection(fontIdx)
-        fontSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(p: android.widget.AdapterView<*>?, v: View?, pos: Int, id: Long) {
-                if (pos != fontIdx) {
-                    prefs.edit().putString("font", fonts[pos]).apply()
-                }
-            }
-            override fun onNothingSelected(p: android.widget.AdapterView<*>?) {}
-        }
-
-        findViewById<TextView>(R.id.import_font_btn).setOnClickListener {
-            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                addCategory(Intent.CATEGORY_OPENABLE)
-                type = "font/*"
-                putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
-            }
-            try {
-                startActivityForResult(intent, REQ_IMPORT_FONT)
-            } catch (_: Exception) {
-                val fallback = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE)
-                    type = "*/*"
-                    putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
-                }
-                try {
-                    startActivityForResult(fallback, REQ_IMPORT_FONT)
-                } catch (_: Exception) {
-                    Toast.makeText(this, "No file picker available", Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
-
-        renderCustomFontList(prefs)
 
         fontSlider.progress = prefs.getInt(Prefs.KEY_FONT_SIZE, Prefs.FONT_SIZE_DEFAULT)
         wakelockSwitch.isChecked = prefs.getBoolean(Prefs.KEY_WAKELOCK, Prefs.WAKELOCK_DEFAULT)
@@ -158,21 +86,6 @@ class SettingsActivity : AppCompatActivity() {
             prefs.edit().putBoolean(Prefs.KEY_AUTOHIDE_KEYS, isChecked).apply()
         }
 
-        val lockSwitch = findViewById<Switch>(R.id.lock_switch)
-        lockSwitch.isChecked = prefs.getBoolean("lock_enabled", false)
-        lockSwitch.setOnCheckedChangeListener { _, isChecked ->
-            if (isChecked) {
-                com.redt.util.AppLock.setupPinDialog(this, prefs) {
-                    lockSwitch.isChecked = prefs.getBoolean("lock_enabled", false)
-                }
-            } else {
-                prefs.edit()
-                    .putBoolean(Prefs.KEY_LOCK_ENABLED, false)
-                    .putString(Prefs.KEY_LOCK_PIN, "")
-                    .apply()
-            }
-        }
-
         val defaultRow1 = "\u2630 ESC \u25B2 \u2014 /"
         val defaultRow2 = "TAB \u25C0 \u25BC \u25B6 CTRL"
         val row1Input = findViewById<EditText>(R.id.extra_keys_row1_input)
@@ -203,12 +116,6 @@ class SettingsActivity : AppCompatActivity() {
         findViewById<TextView>(R.id.export_config_btn).setOnClickListener {
             try {
                 val json = org.json.JSONObject().apply {
-                    put("theme", prefs.getString("theme", "amoled"))
-                    put("custom_bg", prefs.getInt("custom_bg", 0xFF1E1E2E.toInt()))
-                    put("custom_text", prefs.getInt("custom_text", 0xFFCDD6F4.toInt()))
-                    put("custom_primary", prefs.getInt("custom_primary", 0xFF89B4FA.toInt()))
-                    put("custom_extra_bg", prefs.getInt("custom_extra_bg", 0xFF181825.toInt()))
-                    put("font", prefs.getString("font", "monospace"))
                     put("font_size", prefs.getInt("font_size", 20))
                     put("scrollback", prefs.getInt("scrollback", 4))
                     put("terminal_opacity", prefs.getInt("terminal_opacity", 10))
@@ -237,12 +144,6 @@ class SettingsActivity : AppCompatActivity() {
                 }
                 val json = org.json.JSONObject(file.readText())
                 val edit = prefs.edit()
-                edit.putString("theme", json.optString("theme", "amoled"))
-                edit.putInt("custom_bg", json.optInt("custom_bg", 0xFF1E1E2E.toInt()))
-                edit.putInt("custom_text", json.optInt("custom_text", 0xFFCDD6F4.toInt()))
-                edit.putInt("custom_primary", json.optInt("custom_primary", 0xFF89B4FA.toInt()))
-                edit.putInt("custom_extra_bg", json.optInt("custom_extra_bg", 0xFF181825.toInt()))
-                edit.putString("font", json.optString("font", "monospace"))
                 edit.putInt("font_size", json.optInt("font_size", 20))
                 edit.putInt("scrollback", json.optInt("scrollback", 4))
                 edit.putInt("terminal_opacity", json.optInt("terminal_opacity", 10))
@@ -374,7 +275,6 @@ class SettingsActivity : AppCompatActivity() {
                 .show()
         }
 
-        AppTheme.recolorCustomChrome(this)
     }
 
     private fun shareCrashLog(file: File) {
@@ -463,133 +363,6 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
-    private fun showColorPickerDialog(prefs: android.content.SharedPreferences) {
-        val colors = intArrayOf(
-            prefs.getInt("custom_bg", 0xFF1E1E2E.toInt()),
-            prefs.getInt("custom_text", 0xFFCDD6F4.toInt()),
-            prefs.getInt("custom_primary", 0xFF89B4FA.toInt()),
-            prefs.getInt("custom_extra_bg", 0xFF181825.toInt())
-        )
-
-        val bgPreview = android.widget.TextView(this).apply {
-            text = "  Background  "
-            textSize = 16f
-            setPadding(16, 16, 16, 16)
-        }
-        val textPreview = android.widget.TextView(this).apply {
-            text = "  Text Color  "
-            textSize = 16f
-            setPadding(16, 16, 16, 16)
-        }
-        val primaryPreview = android.widget.TextView(this).apply {
-            text = "  Primary/Accent  "
-            textSize = 16f
-            setPadding(16, 16, 16, 16)
-        }
-        val extraPreview = android.widget.TextView(this).apply {
-            text = "  Extra Keys  "
-            textSize = 16f
-            setPadding(16, 16, 16, 16)
-        }
-
-        fun updatePreviews() {
-            bgPreview.setBackgroundColor(colors[0])
-            bgPreview.setTextColor(colors[1])
-            textPreview.setBackgroundColor(colors[0])
-            textPreview.setTextColor(colors[1])
-            primaryPreview.setBackgroundColor(colors[0])
-            primaryPreview.setTextColor(colors[2])
-            extraPreview.setBackgroundColor(colors[3])
-            extraPreview.setTextColor(colors[1])
-        }
-        updatePreviews()
-
-        fun makeColorPicker(label: String, colorIndex: Int): android.widget.LinearLayout {
-            val initial = colors[colorIndex]
-            val r = (initial shr 16) and 0xFF
-            val g = (initial shr 8) and 0xFF
-            val b = initial and 0xFF
-            val layout = android.widget.LinearLayout(this).apply {
-                orientation = android.widget.LinearLayout.VERTICAL
-                setPadding(0, 8, 0, 8)
-            }
-            val labelTv = android.widget.TextView(this).apply {
-                text = label
-                textSize = 13f
-                setTextColor(0xFFCDD6F4.toInt())
-            }
-            layout.addView(labelTv)
-
-            val sr = SeekBar(this).apply { max = 255; progress = r }
-            val sg = SeekBar(this).apply { max = 255; progress = g }
-            val sb = SeekBar(this).apply { max = 255; progress = b }
-            val rv = android.widget.TextView(this).apply { text = "$r"; setTextColor(0xFFCDD6F4.toInt()); textSize = 12f; layoutParams = android.widget.LinearLayout.LayoutParams(36, -2) }
-            val gv = android.widget.TextView(this).apply { text = "$g"; setTextColor(0xFFCDD6F4.toInt()); textSize = 12f; layoutParams = android.widget.LinearLayout.LayoutParams(36, -2) }
-            val bv = android.widget.TextView(this).apply { text = "$b"; setTextColor(0xFFCDD6F4.toInt()); textSize = 12f; layoutParams = android.widget.LinearLayout.LayoutParams(36, -2) }
-
-            val update = {
-                colors[colorIndex] = 0xFF000000.toInt() or (sr.progress shl 16) or (sg.progress shl 8) or sb.progress
-                updatePreviews()
-            }
-
-            val listener = object : android.widget.SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(s: android.widget.SeekBar?, p: Int, f: Boolean) {
-                    when (s) { sr -> rv.text = "$p"; sg -> gv.text = "$p"; sb -> bv.text = "$p" }
-                    update()
-                }
-                override fun onStartTrackingTouch(s: android.widget.SeekBar?) {}
-                override fun onStopTrackingTouch(s: android.widget.SeekBar?) {}
-            }
-            sr.setOnSeekBarChangeListener(listener)
-            sg.setOnSeekBarChangeListener(listener)
-            sb.setOnSeekBarChangeListener(listener)
-
-            for ((seek, valTv, name) in listOf(Triple(sr, rv, "R"), Triple(sg, gv, "G"), Triple(sb, bv, "B"))) {
-                val row = android.widget.LinearLayout(this).apply {
-                    orientation = android.widget.LinearLayout.HORIZONTAL
-                    gravity = android.view.Gravity.CENTER_VERTICAL
-                }
-                row.addView(android.widget.TextView(this).apply {
-                    text = name; setTextColor(0xFFCDD6F4.toInt()); textSize = 12f
-                    layoutParams = android.widget.LinearLayout.LayoutParams(24, -2)
-                })
-                row.addView(seek.apply { layoutParams = android.widget.LinearLayout.LayoutParams(0, -2, 1f) })
-                row.addView(valTv)
-                layout.addView(row)
-            }
-            return layout
-        }
-
-        val scroll = android.widget.ScrollView(this)
-        val container = android.widget.LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
-            addView(bgPreview)
-            addView(makeColorPicker("Background", 0))
-            addView(textPreview)
-            addView(makeColorPicker("Text", 1))
-            addView(primaryPreview)
-            addView(makeColorPicker("Primary", 2))
-            addView(extraPreview)
-            addView(makeColorPicker("Extra Keys", 3))
-        }
-        scroll.addView(container)
-
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Custom Theme Colors")
-            .setView(scroll)
-            .setPositiveButton("Apply") { _, _ ->
-                prefs.edit()
-                    .putInt("custom_bg", colors[0])
-                    .putInt("custom_text", colors[1])
-                    .putInt("custom_primary", colors[2])
-                    .putInt("custom_extra_bg", colors[3])
-                    .apply()
-                recreate()
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
-    }
-
     fun onAddDistroClick(v: View) {
         startActivity(Intent(this, WelcomeActivity::class.java).apply {
             putExtra(WelcomeActivity.EXTRA_SELECT_ONLY, true)
@@ -660,7 +433,6 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        com.redt.util.AppLock.requireUnlock(this, prefs()) {}
         populateDistroList()
         findViewById<TextView>(R.id.battery_opt_btn)?.let { updateBatteryOptimizationLabel(it) }
     }
@@ -693,176 +465,6 @@ class SettingsActivity : AppCompatActivity() {
             } catch (_: Exception) {
                 Toast.makeText(this, "Could not open battery optimization settings", Toast.LENGTH_SHORT).show()
             }
-        }
-    }
-
-    private fun renderCustomFontList(prefs: android.content.SharedPreferences) {
-        val container = findViewById<LinearLayout>(R.id.custom_fonts_list)
-        container.removeAllViews()
-        val files = customFontFiles()
-        if (files.isEmpty()) {
-            container.addView(TextView(this).apply {
-                text = "No custom fonts imported"
-                setTextColor(mutedTextColor())
-                textSize = 12f
-                setPadding(4, 8, 4, 8)
-            })
-            return
-        }
-        for (f in files) {
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(8, 6, 8, 6)
-            }
-            row.addView(TextView(this).apply {
-                text = "${fontDisplayName(f.name)} (custom)"
-                setTextColor(0xFFCDD6F4.toInt())
-                textSize = 13f
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            })
-            row.addView(TextView(this).apply {
-                text = "Rename"
-                setTextColor(0xFF89B4FA.toInt())
-                textSize = 12f
-                setPadding(12, 4, 10, 4)
-                setOnClickListener { showRenameFontDialog(f) }
-            })
-            row.addView(TextView(this).apply {
-                text = "Delete"
-                setTextColor(0xFFFF6B6B.toInt())
-                textSize = 12f
-                setPadding(12, 4, 4, 4)
-                setOnClickListener {
-                    AlertDialog.Builder(this@SettingsActivity)
-                        .setTitle("Remove font?")
-                        .setMessage("Delete '${fontDisplayName(f.name)}'? If it is the current font, the terminal falls back to monospace.")
-                        .setPositiveButton("Delete") { _, _ ->
-                            f.delete()
-                            if (prefs.getString("font", "monospace") == "custom:${f.name}") {
-                                prefs.edit().putString("font", "monospace").apply()
-                            }
-                            renderCustomFontList(prefs)
-                            rebuildFontSpinner(prefs)
-                        }
-                        .setNegativeButton("Cancel", null)
-                        .show()
-                }
-            })
-            container.addView(row)
-        }
-    }
-
-    private fun showRenameFontDialog(file: File) {
-        val input = EditText(this).apply {
-            setText(fontDisplayName(file.name))
-            setTextColor(themeColor(R.attr.terminalText, 0xFFCDD6F4.toInt()))
-            setHintTextColor(0xFF7F849C.toInt())
-            textSize = 14f
-            setSingleLine(true)
-        }
-        AlertDialog.Builder(this)
-            .setTitle("Rename font")
-            .setMessage("New name (extension is kept)")
-            .setView(input)
-            .setPositiveButton("Rename") { _, _ ->
-                val newName = input.text.toString().trim()
-                    .replace(Regex("[^A-Za-z0-9._-]"), "_")
-                if (newName.isEmpty()) {
-                    Toast.makeText(this, "Name cannot be empty", Toast.LENGTH_SHORT).show()
-                    return@setPositiveButton
-                }
-                if (newName == fontDisplayName(file.name)) return@setPositiveButton
-                val ext = file.extension.lowercase().ifEmpty { "ttf" }
-                val target = File(file.parentFile, "$newName.$ext")
-                if (target.exists()) {
-                    Toast.makeText(this, "A font with that name already exists", Toast.LENGTH_SHORT).show()
-                    return@setPositiveButton
-                }
-                val prefs = prefs()
-                if (file.renameTo(target)) {
-                    if (prefs.getString("font", "monospace") == "custom:${file.name}") {
-                        prefs.edit().putString("font", "custom:${target.name}").apply()
-                    }
-                    renderCustomFontList(prefs)
-                    rebuildFontSpinner(prefs)
-                } else {
-                    Toast.makeText(this, "Rename failed", Toast.LENGTH_SHORT).show()
-                }
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
-    }
-
-    private fun makeCheckedSpinnerAdapter(
-        labels: List<String>,
-        spinner: Spinner
-    ): ArrayAdapter<String> = object : ArrayAdapter<String>(this, R.layout.spinner_item, labels) {
-        override fun getDropDownView(position: Int, convertView: View?, parent: android.view.ViewGroup): View {
-            val row = layoutInflater.inflate(R.layout.spinner_dropdown_checked, parent, false)
-            row.findViewById<TextView>(R.id.dropdown_text).text = labels[position]
-            row.findViewById<TextView>(R.id.dropdown_check).visibility =
-                if (position == spinner.selectedItemPosition) android.view.View.VISIBLE else android.view.View.GONE
-            return row
-        }
-    }
-
-    private fun rebuildFontSpinner(prefs: android.content.SharedPreferences) {
-        val customFonts = customFontFiles().map { it.name }
-        val fonts = Prefs.BUILT_IN_FONTS + customFonts.map { "custom:$it" }
-        val fontLabels = fonts.map { if (it.startsWith("custom:")) "${fontDisplayName(it.removePrefix("custom:"))} (custom)" else it }
-        val spinner = findViewById<Spinner>(R.id.font_spinner)
-        val current = prefs.getString(Prefs.KEY_FONT, "monospace")
-        val idx = (fonts.indexOf(current)).coerceAtLeast(0)
-        spinner.adapter = makeCheckedSpinnerAdapter(fontLabels, spinner)
-        spinner.setSelection(idx)
-        spinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(p: android.widget.AdapterView<*>?, v: View?, pos: Int, id: Long) {
-                if (pos != idx) {
-                    prefs.edit().putString("font", fonts[pos]).apply()
-                }
-            }
-            override fun onNothingSelected(p: android.widget.AdapterView<*>?) {}
-        }
-    }
-
-    private fun importFonts(uri: Uri) {
-        try {
-            val name = uri.lastPathSegment?.substringAfterLast('/')
-                ?.takeIf { it.isNotBlank() } ?: "font.ttf"
-            val cleanName = name.replace(Regex("[^A-Za-z0-9._-]"), "_")
-                .takeIf { it.isNotBlank() } ?: "font.ttf"
-            val ext = if (cleanName.substringAfterLast('.', "").equals("otf", true)) "otf" else "ttf"
-            val base = cleanName.substringBeforeLast('.', cleanName)
-            val dir = File(filesDir, "fonts")
-            dir.mkdirs()
-            var target = File(dir, cleanName)
-            var counter = 1
-            while (target.exists()) {
-                target = File(dir, "${base}_$counter.$ext")
-                counter++
-            }
-            contentResolver.openInputStream(uri)?.use { input ->
-                target.outputStream().use { input.copyTo(it) }
-            }
-        } catch (e: Exception) {
-            Toast.makeText(this, "Import failed", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == REQ_IMPORT_FONT && resultCode == RESULT_OK && data != null) {
-            val uris = mutableListOf<Uri>()
-            data.clipData?.let { clip ->
-                for (i in 0 until clip.itemCount) uris.add(clip.getItemAt(i).uri)
-            }
-            if (uris.isEmpty()) data.data?.let { uris.add(it) }
-            for (uri in uris) importFonts(uri)
-            val prefs = prefs()
-            renderCustomFontList(prefs)
-            rebuildFontSpinner(prefs)
-            Toast.makeText(this, if (uris.size > 1) "${uris.size} fonts imported" else "Font imported", Toast.LENGTH_SHORT).show()
         }
     }
 

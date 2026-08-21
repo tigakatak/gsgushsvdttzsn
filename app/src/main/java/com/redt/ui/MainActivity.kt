@@ -22,11 +22,9 @@ class MainActivity : AppCompatActivity() {
 
     private val installer by lazy { DistroInstaller(applicationContext) }
 
-    private var lastAppliedTheme: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         AppTheme.apply(this)
-        lastAppliedTheme = prefs().getString(Prefs.KEY_THEME, "amoled")
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         // Exit from the notification quits the app entirely: this collector is
@@ -75,7 +73,6 @@ class MainActivity : AppCompatActivity() {
             installer.sweepOrphanFiles()
         }
 
-        AppTheme.recolorCustomChrome(this)
     }
 
     private fun populateDistroList() {
@@ -235,15 +232,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        val current = prefs().getString(Prefs.KEY_THEME, "amoled")
-        if (lastAppliedTheme != null && lastAppliedTheme != current) {
-            // Theme changed while this activity was stopped (e.g. in Settings):
-            // setTheme() cannot restyle existing views, rebuild instead.
-            lastAppliedTheme = current
-            if (!isFinishing && !isDestroyed) recreate()
-            return
-        }
-        lastAppliedTheme = current
-        com.redt.util.AppLock.requireUnlock(this, prefs()) { populateDistroList() }
+        populateDistroList()
     }
 }

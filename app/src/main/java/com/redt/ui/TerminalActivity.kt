@@ -74,7 +74,6 @@ class TerminalActivity : AppCompatActivity() {
     private val sessions: List<TerminalSession> get() = sessionStore.sessions.value
     private val currentIndex: Int get() = sessionStore.currentIndex.value
 
-    private var lastAppliedTheme: String? = null
 
     private val requestNotificationPermission =
         registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
@@ -101,7 +100,7 @@ class TerminalActivity : AppCompatActivity() {
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        applyTheme()
+        AppTheme.apply(this)
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_terminal)
         setupImeVisibilityListener()
@@ -193,7 +192,6 @@ class TerminalActivity : AppCompatActivity() {
                 sessionStore.attachClient(s, backend)
             }
             backend.applyFontSize()
-            applyFontFromPrefs(prefs)
             terminalView.setBackgroundColor(terminalBgWithAlpha())
             val target = sessionStore.indexOfSessionForDistro(distroName)
             if (target >= 0) {
@@ -209,7 +207,6 @@ class TerminalActivity : AppCompatActivity() {
             }
             updateDrawer()
         }
-        AppTheme.recolorCustomChrome(this)
     }
 
     private fun ensureTerminalBackend(): TerminalBackend =
@@ -231,7 +228,6 @@ class TerminalActivity : AppCompatActivity() {
                     val backend = ensureTerminalBackend()
                     if (terminalView.mRenderer == null) {
                         backend.applyFontSize()
-                        applyFontFromPrefs(prefs())
                         terminalView.setBackgroundColor(terminalBgWithAlpha())
                     }
                     active.forEach { sessionStore.attachClient(it, backend) }
@@ -767,16 +763,6 @@ class TerminalActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        com.redt.util.AppLock.requireUnlock(this, prefs()) {}
-        val currentTheme = prefs().getString(Prefs.KEY_THEME, "amoled")
-        if (lastAppliedTheme != null && lastAppliedTheme != currentTheme) {
-            // Theme changed while this activity was stopped (e.g. in Settings):
-            // setTheme() cannot restyle existing views, rebuild instead.
-            lastAppliedTheme = currentTheme
-            if (!isFinishing && !isDestroyed) recreate()
-            return
-        }
-        lastAppliedTheme = currentTheme
         syncExtraKeysRows()
         sendServiceAction(TerminalService.ACTION_AUTO_RELEASE)
         if (!com.redt.util.StoragePermission.isAccessible()) {
@@ -790,7 +776,7 @@ class TerminalActivity : AppCompatActivity() {
         terminalView.requestFocus()
         terminalView.onScreenUpdated()
         applyTerminalColors()
-        syncFontFromPrefs()
+        terminalBackend?.applyFontSize()
         syncWakeLock()
         updateModifierButtons()
         updateExtraKeysVisibility()
@@ -885,38 +871,13 @@ class TerminalActivity : AppCompatActivity() {
         menu.add(0, 12, 0, "Copy")
         menu.add(0, 13, 0, "Paste")
         menu.add(0, 14, 0, "Export")
-        menu.add(0, 5, 0, "Reset")
-        val fontSub = menu.addSubMenu(0, 7, 0, "Fonts")
-        for ((id, name) in Prefs.FONT_MENU_IDS) {
-            fontSub.add(0, id, 0, name)
-        }
-        customFontFiles().forEachIndexed { i, f ->
-            fontSub.add(0, Prefs.CUSTOM_FONT_MENU_BASE + i, 0, "${fontDisplayName(f.name)} (custom)")
-        }
-
-        val themeSub = menu.addSubMenu(0, 6, 0, "Theme")
-        themeSub.add(0, 61, 0, "Catppuccin Dark")
-        themeSub.add(0, 62, 0, "Green Terminal")
-        themeSub.add(0, 63, 0, "Light")
-        themeSub.add(0, 69, 0, "Red Terminal")
-        themeSub.add(0, 68, 0, "AMOLED Black")
-        themeSub.add(0, 64, 0, "Dracula")
-        themeSub.add(0, 65, 0, "Nord")
-        themeSub.add(0, 66, 0, "Tokyo Night")
-        themeSub.add(0, 67, 0, "Gruvbox Dark")
-        themeSub.add(0, 70, 0, "Custom")
-        menu.add(0, 9, 0, "Snippets")
     }
 
-    private fun resolveTerminalColors(): Triple<Int, Int, Int> {
-        // resolveThemeColor is custom-aware: for the custom theme it returns
-        // custom_bg / custom_extra_bg / custom_text directly.
-        val prefs = prefs()
-        val bg = AppTheme.resolveThemeColor(this, prefs, R.attr.terminalBg, 0xFF1E1E2E.toInt())
-        val extraBg = AppTheme.resolveThemeColor(this, prefs, R.attr.extraKeysBg, 0xFF181825.toInt())
-        val textColor = AppTheme.resolveThemeColor(this, prefs, R.attr.terminalText, 0xFFCDD6F4.toInt())
-        return Triple(bg, extraBg, textColor)
-    }
+    private fun resolveTerminalColors(): Triple<Int, Int, Int> = Triple(
+        themeColor(R.attr.terminalBg, 0xFF1E1E2E.toInt()),
+        themeColor(R.attr.extraKeysBg, 0xFF181825.toInt()),
+        themeColor(R.attr.terminalText, 0xFFCDD6F4.toInt())
+    )
 
     private fun colorWithAlpha(color: Int): Int {
         val opacity = prefs().getInt("terminal_opacity", 10).coerceIn(0, 10)
@@ -934,14 +895,6 @@ class TerminalActivity : AppCompatActivity() {
         palette[TextStyle.COLOR_INDEX_BACKGROUND] = bg
         palette[TextStyle.COLOR_INDEX_CURSOR] = textColor
         view.invalidate()
-    }
-
-    private fun applyTerminalTheme(themeName: String) {
-        prefs().edit().putString("theme", themeName).apply()
-        // setTheme() after onCreate cannot restyle already-inflated views;
-        // rebuild the activity so XML chrome and every programmatic view pick
-        // up the new theme. Sessions live in the session store and survive.
-        if (!isFinishing && !isDestroyed) recreate()
     }
 
     private fun applyTerminalColors() {
@@ -964,67 +917,15 @@ class TerminalActivity : AppCompatActivity() {
         applyEmulatorColors(terminalView)
     }
 
-    private fun resetTerminalDefaults(prefs: android.content.SharedPreferences) {
-        session?.reset()
-        prefs.edit().putString("font", "monospace").apply()
-        applyFontFromPrefs(prefs)
-        terminalBackend?.setFontSize(Prefs.FONT_SIZE_DEFAULT)
-        applyTerminalTheme("amoled")
-    }
-
     override fun onContextItemSelected(item: MenuItem): Boolean {
-        val prefs = prefs()
         return when (item.itemId) {
             12 -> { copySelectedText(); true }
             13 -> { pasteClipboard(); true }
             14 -> { exportCurrentOutput(); true }
-             5 -> { resetTerminalDefaults(prefs); true }
-              61 -> { applyTerminalTheme("default"); true }
-              62 -> { applyTerminalTheme("green"); true }
-              63 -> { applyTerminalTheme("light"); true }
-              69 -> { applyTerminalTheme("red"); true }
-              68 -> { applyTerminalTheme("amoled"); true }
-              64 -> { applyTerminalTheme("dracula"); true }
-              65 -> { applyTerminalTheme("nord"); true }
-              66 -> { applyTerminalTheme("tokyo"); true }
-              67 -> { applyTerminalTheme("gruvbox"); true }
-               70 -> { applyTerminalTheme("custom"); true }
-               in Prefs.FONT_MENU_IDS.map { it.first } -> {
-                   val fontName = Prefs.FONT_MENU_IDS.first { it.first == item.itemId }.second
-                   prefs.edit().putString(Prefs.KEY_FONT, fontName).apply(); applyFontFromPrefs(prefs); true
-               }
-                in Prefs.CUSTOM_FONT_MENU_BASE..(Prefs.CUSTOM_FONT_MENU_BASE + 999) -> {
-                    val fontIdx = item.itemId - Prefs.CUSTOM_FONT_MENU_BASE
-                    val fontName = customFontFiles().getOrNull(fontIdx)?.name ?: ""
-                    prefs.edit().putString("font", "custom:$fontName").apply()
-                    applyFontFromPrefs(prefs); true
-                }
-                  9 -> { showSnippetsDialog(); true }
              else -> super.onContextItemSelected(item)
         }
     }
 
-    private val fontCache = HashMap<String, android.graphics.Typeface?>()
-
-    private fun loadFont(assetPath: String): android.graphics.Typeface? =
-        fontCache.getOrPut(assetPath) {
-            try {
-                android.graphics.Typeface.createFromAsset(assets, assetPath)
-            } catch (_: Exception) {
-                null
-            }
-        }
-
-    private fun applyFontFromPrefs(prefs: android.content.SharedPreferences) {
-        val tf = fontFromPrefs(prefs)
-        terminalView.setTypeface(tf)
-    }
-
-    private fun syncFontFromPrefs() {
-        val backend = terminalBackend ?: return
-        backend.applyFontSize()
-        applyFontFromPrefs(prefs())
-    }
 
     private fun syncWakeLock() {
         val enabled = prefs().getBoolean(Prefs.KEY_WAKELOCK, Prefs.WAKELOCK_DEFAULT)
@@ -1035,142 +936,4 @@ class TerminalActivity : AppCompatActivity() {
         }
     }
 
-    private fun fontFromPrefs(prefs: android.content.SharedPreferences): android.graphics.Typeface {
-        val fontName = prefs.getString("font", "monospace")
-        val tf = when {
-            fontName != null && fontName.startsWith("custom:") ->
-                try {
-                    android.graphics.Typeface.createFromFile(
-                        File(filesDir, "fonts/${fontName.removePrefix("custom:")}")
-                    )
-                } catch (_: Exception) {
-                    null
-                }
-            else -> {
-                val asset = Prefs.FONT_ASSET_MAP[fontName]
-                if (asset != null) loadFont(asset) else android.graphics.Typeface.MONOSPACE
-            }
-        }
-        return tf ?: android.graphics.Typeface.MONOSPACE
-    }
-
-    private fun applyTheme() {
-        AppTheme.apply(this)
-        lastAppliedTheme = prefs().getString(Prefs.KEY_THEME, "amoled")
-    }
-
-    private fun showSnippetsDialog() {
-        val prefs = prefs()
-        val names = mutableListOf<String>()
-        val contents = mutableListOf<String>()
-        try {
-            val json = prefs.getString(Prefs.KEY_SNIPPETS, "[]") ?: "[]"
-            val arr = org.json.JSONArray(json)
-            for (i in 0 until arr.length()) {
-                val obj = arr.getJSONObject(i)
-                names.add(obj.getString("name"))
-                contents.add(obj.getString("content"))
-            }
-        } catch (e: org.json.JSONException) {
-            android.util.Log.w("TerminalActivity", "Malformed snippets pref", e)
-        }
-
-        val items = if (names.isEmpty()) arrayOf("(no snippets — tap + to add)") else names.toTypedArray()
-
-        val builder = android.app.AlertDialog.Builder(this)
-        builder.setTitle("Snippets")
-        builder.setItems(items) { _, which ->
-            if (names.isNotEmpty() && which < contents.size) {
-                val content = contents[which]
-                val session = terminalView.mTermSession ?: return@setItems
-                session.write(content)
-            }
-        }
-        builder.setPositiveButton("+ Add") { _, _ -> showAddSnippetDialog() }
-        builder.setNegativeButton("Edit") { _, _ -> showEditSnippetsDialog() }
-        builder.show()
-    }
-
-    private fun showAddSnippetDialog() {
-        val input = android.widget.EditText(this)
-        input.hint = "command or text"
-        input.setTextColor(0xFFCDD6F4.toInt())
-        input.setHintTextColor(hintColor())
-
-        val nameInput = android.widget.EditText(this)
-        nameInput.hint = "snippet name"
-        nameInput.setTextColor(0xFFCDD6F4.toInt())
-        nameInput.setHintTextColor(hintColor())
-
-        val layout = android.widget.LinearLayout(this)
-        layout.orientation = android.widget.LinearLayout.VERTICAL
-        layout.setPadding(48, 16, 48, 16)
-        layout.addView(nameInput)
-        layout.addView(input)
-
-        android.app.AlertDialog.Builder(this)
-            .setTitle("Add Snippet")
-            .setView(layout)
-            .setPositiveButton("Save") { _, _ ->
-                val name = nameInput.text.toString().trim()
-                val content = input.text.toString()
-                if (name.isNotEmpty() && content.isNotEmpty()) {
-                    saveSnippet(name, content)
-                }
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
-    }
-
-    private fun saveSnippet(name: String, content: String) {
-        val prefs = prefs()
-        val arr = try {
-            org.json.JSONArray(prefs.getString(Prefs.KEY_SNIPPETS, "[]") ?: "[]")
-        } catch (e: org.json.JSONException) {
-            org.json.JSONArray()
-        }
-        val obj = org.json.JSONObject()
-        obj.put("name", name)
-        obj.put("content", content)
-        arr.put(obj)
-        prefs.edit().putString(Prefs.KEY_SNIPPETS, arr.toString()).apply()
-    }
-
-    private fun showEditSnippetsDialog() {
-        val prefs = prefs()
-        val arr = try {
-            org.json.JSONArray(prefs.getString(Prefs.KEY_SNIPPETS, "[]") ?: "[]")
-        } catch (e: org.json.JSONException) {
-            android.widget.Toast.makeText(this, "No snippets to edit", android.widget.Toast.LENGTH_SHORT).show()
-            return
-        }
-        val names = mutableListOf<String>()
-        for (i in 0 until arr.length()) {
-            try {
-                names.add(arr.getJSONObject(i).getString("name"))
-            } catch (_: org.json.JSONException) {}
-        }
-
-        if (names.isEmpty()) {
-            android.widget.Toast.makeText(this, "No snippets to edit", android.widget.Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        val builder = android.app.AlertDialog.Builder(this)
-        builder.setTitle("Edit / Delete Snippets")
-        builder.setItems(names.toTypedArray()) { _, which ->
-            if (which < names.size) {
-                android.app.AlertDialog.Builder(this)
-                    .setTitle(names[which])
-                    .setMessage("What to do with this snippet?")
-                    .setPositiveButton("Delete") { _, _ ->
-                        arr.remove(which)
-                        prefs.edit().putString("snippets", arr.toString()).apply()
-                    }
-                    .setNegativeButton("Cancel", null)
-                    .show()
-            }
-        }
-        builder.show()
-    }
 }

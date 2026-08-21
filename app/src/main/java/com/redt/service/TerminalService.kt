@@ -14,7 +14,7 @@ import com.redt.R
 import com.redt.distro.DistroInstaller
 import com.redt.RedTApp
 import com.redt.proot.ProotInstaller
-import com.redt.ui.AppTheme
+import com.redt.ui.themeColor
 import com.redt.ui.Prefs
 import com.redt.ui.TerminalActivity
 import com.redt.ui.RedTWidgetProvider
@@ -299,8 +299,5 @@ class TerminalService : Service() {
         return dir.list()?.sorted()?.firstOrNull()?.capitalized() ?: "Terminal"
     }
 
-    private fun themeAccent(): Int {
-        val prefs = prefs()
-        return AppTheme.resolveThemeColor(this, prefs, R.attr.themeAccent, 0xFF89B4FA.toInt())
-    }
+    private fun themeAccent(): Int = themeColor(R.attr.themeAccent, 0xFF89B4FA.toInt())
 }
