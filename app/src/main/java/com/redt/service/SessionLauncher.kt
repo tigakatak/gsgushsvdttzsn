@@ -3,6 +3,7 @@ package com.redt.service
 import android.content.Context
 import android.util.Log
 import com.redt.distro.DistroInstaller
+import com.redt.distro.DistroRegistry
 import com.redt.proot.ProotInstaller
 import com.redt.ui.Prefs
 import com.redt.ui.prefs
@@ -23,9 +24,9 @@ internal class SessionLauncher(context: Context) {
     private val context = context.applicationContext
     private val installer = DistroInstaller(this.context)
 
-    fun prepare(distroName: String): LaunchSpec {
-        val rootfsDir = installer.getRootfsDir(distroName)
-        require(rootfsDir.exists()) { "Distro $distroName not installed" }
+    fun prepare(): LaunchSpec {
+        val rootfsDir = installer.getRootfsDir(DistroRegistry.alpine.name)
+        require(rootfsDir.exists()) { "Alpine rootfs not installed" }
 
         val repairLog = installer.repairRootfs(rootfsDir)
         if (repairLog.contains("WARN") || repairLog.contains("missing")) {
@@ -125,45 +126,6 @@ exec "$prootBin" -0 -L -r "$rootfsPath" -w /root --link2symlink --sysvipc --ashm
 
     private fun writeShellConfigs(rootfsDir: File) {
         try {
-            val osRelease = runCatching { File(rootfsDir, "etc/os-release").readText() }.getOrDefault("")
-            val distro = when {
-                osRelease.contains("Alpine", ignoreCase = true) -> "alpine"
-                osRelease.contains("Ubuntu", ignoreCase = true) -> "ubuntu"
-                osRelease.contains("Debian", ignoreCase = true) -> "debian"
-                File(rootfsDir, "etc/fedora-release").exists() ||
-                    osRelease.contains("Fedora", ignoreCase = true) -> "fedora"
-                osRelease.contains("Manjaro", ignoreCase = true) -> "manjaro"
-                osRelease.contains("Arch Linux", ignoreCase = true) -> "arch"
-                osRelease.contains("Artix", ignoreCase = true) -> "artix"
-                osRelease.contains("Rocky Linux", ignoreCase = true) -> "rocky"
-                osRelease.contains("AlmaLinux", ignoreCase = true) -> "almalinux"
-                File(rootfsDir, "etc/debian_version").exists() -> "debian"
-                else -> "unknown"
-            }
-            val (update, install, quiet) = when (distro) {
-                "alpine" -> Triple("apk update", "apk add", "-q")
-                "debian", "ubuntu" -> Triple(
-                    "apt-get update -qq",
-                    "DEBIAN_FRONTEND=noninteractive apt-get install -y",
-                    "-qq",
-                )
-                "fedora", "rocky", "almalinux" -> Triple(
-                    "dnf check-update || true", "dnf install -y", "-q"
-                )
-                "arch", "artix" -> Triple(
-                    "pacman -Syy --noconfirm",
-                    "pacman -S --noconfirm --needed glibc gcc-libs",
-                    "",
-                )
-                "manjaro" -> Triple("pacman -Syy --noconfirm", "pacman -S --noconfirm", "")
-                else -> Triple(":", "false", "")
-            }
-            val prereq = when (distro) {
-                "debian", "ubuntu" -> "gawk"
-                else -> ""
-            }
-            val prereqCmd = if (prereq.isNotEmpty()) "$install $quiet $prereq 2>>/root/.setup_error.log && " else ""
-
             val rootDir = File(rootfsDir, "root").apply { mkdirs() }
             val isNew = !File(rootDir, ".init_done").exists()
             // Shell customizations live in a dedicated file sourced from
@@ -203,7 +165,7 @@ alias mv='mv -i'
             val startupScript = """has_bash() { command -v bash >/dev/null 2>&1; }
 if [ ! -f /root/.init_done ] || ! has_bash; then
     echo '>>> First-time distro setup...'
-    if $update 2>/root/.setup_error.log && ${prereqCmd}$install $quiet bash 2>>/root/.setup_error.log; then
+    if apk update 2>/root/.setup_error.log && apk add -q bash 2>>/root/.setup_error.log; then
         if has_bash; then
             touch /root/.init_done
             echo '>>> Setup complete.'
@@ -214,7 +176,7 @@ if [ ! -f /root/.init_done ] || ! has_bash; then
     else
         echo '>>> Setup was interrupted or failed - starting a repair shell.'
         echo '>>> Details: /root/.setup_error.log'
-        echo ">>> Run manually: $update && ${prereqCmd}$install $quiet bash"
+        echo '>>> Run manually: apk update && apk add bash'
     fi
 fi
 if command -v bash >/dev/null 2>&1; then

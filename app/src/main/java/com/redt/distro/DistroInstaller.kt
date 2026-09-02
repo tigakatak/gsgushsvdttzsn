@@ -185,10 +185,7 @@ class DistroInstaller(private val context: Context) {
                 com.redt.util.Format.invalidate(dir)
             } catch (_: Exception) {}
             try {
-                val distro = DistroRegistry.allDistros.firstOrNull { it.name == distroName }
-                val cached = if (distro != null) cachedTarballFile(distro)
-                else File(tarballDir(), "$distroName.tar.gz")
-                cached.delete()
+                cachedTarballFile(DistroRegistry.alpine).delete()
                 // The .part file is intentionally kept: a fresh attempt
                 // resumes from it instead of restarting the download.
             } catch (_: Exception) {}
@@ -696,15 +693,6 @@ class DistroInstaller(private val context: Context) {
             "Invalid distro name"
         }
         return distroName
-    }
-
-    fun getInstalledDistros(): List<String> {
-        val dir = File(context.filesDir, "installed")
-        if (!dir.exists()) return emptyList()
-        return dir.list()
-            ?.filter { runCatching { getRootfsDir(it).isDirectory }.getOrDefault(false) }
-            ?.toList()
-            ?: emptyList()
     }
 
     /**

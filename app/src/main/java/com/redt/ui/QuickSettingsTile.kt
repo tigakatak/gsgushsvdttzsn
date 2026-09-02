@@ -20,7 +20,7 @@ class QuickSettingsTile : TileService() {
 
     override fun onClick() {
         if (!isLocked) {
-            TerminalActivity.launch(this, "alpine")
+            TerminalActivity.launch(this)
         }
     }
 

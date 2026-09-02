@@ -46,7 +46,7 @@ import java.io.File
 
 class TerminalActivity : AppCompatActivity() {
 
-    private lateinit var distroName: String
+    private val distroName = DistroRegistry.alpine.name
     private lateinit var terminalView: TerminalView
     private lateinit var drawerLayout: DrawerLayout
     private lateinit var sessionListContainer: LinearLayout
@@ -64,12 +64,9 @@ class TerminalActivity : AppCompatActivity() {
     internal fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     companion object {
-        const val EXTRA_DISTRO = "distro"
-
-        fun launch(context: Context, distroName: String) {
+        fun launch(context: Context) {
             context.startActivity(
                 Intent(context, TerminalActivity::class.java).apply {
-                    putExtra(EXTRA_DISTRO, distroName)
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
                 }
             )
@@ -125,10 +122,6 @@ class TerminalActivity : AppCompatActivity() {
             installer.sweepOrphanFiles()
         }
 
-
-        distroName = intent?.getStringExtra(EXTRA_DISTRO) ?: "alpine"
-        prefs()
-            .edit().putString(Prefs.KEY_LAST_DISTRO, distroName).apply()
         terminalView = findViewById(R.id.terminal_view)
         drawerLayout = findViewById(R.id.drawer_layout)
         sessionListContainer = findViewById(R.id.session_list_container)
@@ -176,7 +169,7 @@ class TerminalActivity : AppCompatActivity() {
         }
 
         findViewById<TextView>(R.id.new_session_button).setOnClickListener {
-            requestNewSession(distroName)
+            requestNewSession()
         }
 
         observeSessions()
@@ -189,7 +182,7 @@ class TerminalActivity : AppCompatActivity() {
             }
         }
         if (sessions.isEmpty()) {
-            requestNewSession(distroName)
+            requestNewSession()
         } else {
             startForegroundService()
             val backend = ensureTerminalBackend()
@@ -198,17 +191,13 @@ class TerminalActivity : AppCompatActivity() {
             }
             backend.applyFontSize()
             terminalView.setBackgroundColor(resolveTerminalColors().first)
-            val target = sessionStore.indexOfSessionForDistro(distroName)
-            if (target >= 0) {
-                sessionStore.switchToSession(sessions[target])
-                terminalView.attachSession(sessions[target])
-                terminalView.onScreenUpdated()
-                terminalView.post {
-                    terminalView.requestFocus()
-                    terminalView.isFocusableInTouchMode = true
-                }
-            } else {
-                requestNewSession(distroName)
+            val current = sessions[currentIndex.coerceIn(0, sessions.lastIndex)]
+            sessionStore.switchToSession(current)
+            terminalView.attachSession(current)
+            terminalView.onScreenUpdated()
+            terminalView.post {
+                terminalView.requestFocus()
+                terminalView.isFocusableInTouchMode = true
             }
             updateDrawer()
         }
@@ -269,21 +258,19 @@ class TerminalActivity : AppCompatActivity() {
     }
 
     private fun updateDistroSizeLabel() {
-        val displayedDistro = distroName
-        val rootfsDir = installer.getRootfsDir(displayedDistro)
+        val rootfsDir = installer.getRootfsDir(distroName)
         val sizeLabel = findViewById<TextView>(R.id.distro_size_label)
         val cached = Format.cachedSize(rootfsDir)
         sizeLabel.text = if (cached != null) {
-            "$displayedDistro (${Format.size(cached)})"
+            "$distroName (${Format.size(cached)})"
         } else {
-            displayedDistro
+            distroName
         }
         val weakLabel = java.lang.ref.WeakReference(sizeLabel)
         Format.dirSizeAsync(rootfsDir) { bytes ->
-            if (distroName != displayedDistro) return@dirSizeAsync
             val view = weakLabel.get() ?: return@dirSizeAsync
             if (view.isAttachedToWindow) {
-                view.text = "$displayedDistro (${Format.size(bytes)})"
+                view.text = "$distroName (${Format.size(bytes)})"
             }
         }
     }
@@ -524,17 +511,15 @@ class TerminalActivity : AppCompatActivity() {
     private val session: TerminalSession?
         get() = if (currentIndex in sessions.indices) sessions[currentIndex] else null
 
-    private fun requestNewSession(requestedDistro: String) {
-        val rootfsDir = installer.getRootfsDir(requestedDistro)
-        if (!rootfsDir.exists()) {
-            ensureDistroInstalled(requestedDistro)
+    private fun requestNewSession() {
+        if (!installer.getRootfsDir(distroName).exists()) {
+            ensureDistroInstalled()
             return
         }
         ContextCompat.startForegroundService(
             this,
             Intent(this, TerminalService::class.java).apply {
                 action = TerminalService.ACTION_CREATE_SESSION
-                putExtra(TerminalService.EXTRA_DISTRO, requestedDistro)
             },
         )
     }
@@ -738,20 +723,6 @@ class TerminalActivity : AppCompatActivity() {
 
     private var errorOverlay: TextView? = null
 
-    private fun showError(msg: String) {
-        terminalView.visibility = android.view.View.GONE
-        val parent = terminalView.parent as? android.view.ViewGroup ?: return
-        clearErrorOverlay()
-        val tv = TextView(this).apply {
-            text = msg
-            setTextColor(themeColor(R.attr.terminalText, 0xFFCDD6F4.toInt()))
-            textSize = 14f
-            setPadding(dp(24), dp(24), dp(24), dp(24))
-        }
-        errorOverlay = tv
-        parent.addView(tv)
-    }
-
     private fun clearErrorOverlay() {
         errorOverlay?.let { (it.parent as? android.view.ViewGroup)?.removeView(it) }
         errorOverlay = null
@@ -767,13 +738,9 @@ class TerminalActivity : AppCompatActivity() {
      * The app opens straight into the terminal: a missing distro rootfs is
      * downloaded and extracted here before the first session is created.
      */
-    private fun ensureDistroInstalled(name: String) {
+    private fun ensureDistroInstalled() {
         if (installJob?.isActive == true) return
-        val distro = DistroRegistry.allDistros.firstOrNull { it.name == name }
-        if (distro == null) {
-            showError("Unknown distro: $name")
-            return
-        }
+        val distro = DistroRegistry.alpine
         showInstallOverlay(distro.displayName)
         installJob = lifecycleScope.launch {
             try {
@@ -788,7 +755,7 @@ class TerminalActivity : AppCompatActivity() {
                 clearInstallOverlay()
                 updateDistroSizeLabel()
                 Toast.makeText(this@TerminalActivity, "${distro.displayName} installed", Toast.LENGTH_SHORT).show()
-                requestNewSession(name)
+                requestNewSession()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: DistroInstaller.CancelledException) {
@@ -862,7 +829,7 @@ class TerminalActivity : AppCompatActivity() {
         if (overlay.getChildAt(overlay.childCount - 1) !is Button) {
             overlay.addView(Button(this).apply {
                 text = "Retry"
-                setOnClickListener { ensureDistroInstalled(distroName) }
+                setOnClickListener { ensureDistroInstalled() }
             })
         }
     }
@@ -913,25 +880,6 @@ class TerminalActivity : AppCompatActivity() {
         try {
             startService(Intent(this, TerminalService::class.java).apply { this.action = action })
         } catch (_: Exception) {}
-    }
-
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        val newDistro = intent.getStringExtra(EXTRA_DISTRO) ?: return
-        distroName = newDistro
-        prefs().edit().putString(Prefs.KEY_LAST_DISTRO, distroName).apply()
-        updateDistroSizeLabel()
-
-        val target = sessionStore.indexOfSessionForDistro(newDistro)
-        if (target >= 0) {
-            sessionStore.switchToSession(sessions[target])
-            terminalView.attachSession(sessions[target])
-            terminalView.onScreenUpdated()
-            terminalView.requestFocus()
-            updateDrawer()
-        } else {
-            requestNewSession(newDistro)
-        }
     }
 
     override fun onDestroy() {

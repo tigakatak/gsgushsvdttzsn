@@ -24,24 +24,15 @@ internal class TerminalSessionStore {
     private val _exitSignal = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val exitSignal: SharedFlow<Unit> = _exitSignal.asSharedFlow()
 
-    private val sessionDistros = IdentityHashMap<TerminalSession, String>()
     private val sessionClients = IdentityHashMap<TerminalSession, TerminalSessionClientBridge>()
 
     internal fun addSession(
         session: TerminalSession,
-        distroName: String,
         clientBridge: TerminalSessionClientBridge,
     ) {
         synchronized(this) {
-            sessionDistros[session] = distroName
             sessionClients[session] = clientBridge
             _sessions.value = _sessions.value + session
-        }
-    }
-
-    fun indexOfSessionForDistro(distroName: String): Int = synchronized(this) {
-        _sessions.value.indexOfFirst {
-            sessionDistros[it].equals(distroName, ignoreCase = true)
         }
     }
 
@@ -59,7 +50,6 @@ internal class TerminalSessionStore {
             if (index !in current.indices) return
             val removed = current[index]
             _sessions.value = current.toMutableList().apply { removeAt(index) }
-            sessionDistros.remove(removed)
             sessionClients.remove(removed)?.detachAll()
             removed.finishIfRunning()
             if (_currentIndex.value >= _sessions.value.size) {
@@ -76,7 +66,6 @@ internal class TerminalSessionStore {
             if (index < 0) return
             val current = _sessions.value
             _sessions.value = current.toMutableList().apply { removeAt(index) }
-            sessionDistros.remove(session)
             sessionClients.remove(session)?.detachAll()
             if (_currentIndex.value >= _sessions.value.size) {
                 _currentIndex.value = _sessions.value.size - 1
@@ -91,7 +80,6 @@ internal class TerminalSessionStore {
             val active = _sessions.value
             _sessions.value = emptyList()
             _currentIndex.value = -1
-            sessionDistros.clear()
             sessionClients.values.forEach { it.detachAll() }
             sessionClients.clear()
             active.forEach { it.finishIfRunning() }

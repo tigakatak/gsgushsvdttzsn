@@ -8,6 +8,7 @@ import android.content.Intent
 import android.widget.RemoteViews
 import com.redt.R
 import com.redt.distro.DistroInstaller
+import com.redt.distro.DistroRegistry
 import com.redt.session.terminalSessionStore
 import com.redt.util.Format
 
@@ -35,51 +36,26 @@ class RedTWidgetProvider : AppWidgetProvider() {
 
     fun updateWidget(context: Context, appWidgetManager: AppWidgetManager, widgetId: Int) {
         val views = RemoteViews(context.packageName, R.layout.widget_layout)
-        val installer = DistroInstaller(context)
-        val distros = installer.getInstalledDistros()
+        val rootfsDir = DistroInstaller(context).getRootfsDir(DistroRegistry.alpine.name)
+        val sessionCount = context.terminalSessionStore.sessions.value.size
 
-        val prefs = context.prefs()
-        val chosen = prefs.getString("widget_distro_$widgetId", null)
-        val distro = when {
-            distros.isEmpty() -> null
-            chosen != null && distros.contains(chosen) -> chosen
-            else -> distros.first()
-        }
-
-        if (distro == null) {
-            views.setTextViewText(R.id.widget_distro_name, "No distros installed")
-            views.setTextViewText(R.id.widget_distro_status, "Open RedT to install")
-            views.setTextViewText(R.id.widget_session_count, "")
-            val openIntent = Intent(context, TerminalActivity::class.java).apply {
-                putExtra(TerminalActivity.EXTRA_DISTRO, "alpine")
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            }
-            views.setOnClickPendingIntent(R.id.widget_root, PendingIntent.getActivity(
-                context, 0, openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            ))
+        if (!rootfsDir.exists()) {
+            views.setTextViewText(R.id.widget_distro_name, "Alpine")
+            views.setTextViewText(R.id.widget_distro_status, "Not installed")
+            views.setTextViewText(R.id.widget_session_count, "Tap to install")
         } else {
-            views.setTextViewText(R.id.widget_distro_name, distro.capitalized())
-            val rootfsDir = installer.getRootfsDir(distro)
             val cached = Format.cachedSize(rootfsDir)
             val sizeStr = if (cached != null) Format.size(cached) else ""
-            val sessionCount = context.terminalSessionStore.sessions.value.size
+            views.setTextViewText(R.id.widget_distro_name, "Alpine")
             views.setTextViewText(R.id.widget_distro_status, "$sizeStr · $sessionCount session(s)")
             views.setTextViewText(
                 R.id.widget_session_count,
                 if (sessionCount > 0) "Tap to resume" else "Tap to launch"
             )
-            val launchIntent = Intent(context, TerminalActivity::class.java).apply {
-                putExtra(TerminalActivity.EXTRA_DISTRO, distro)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            }
-            views.setOnClickPendingIntent(R.id.widget_root, PendingIntent.getActivity(
-                context, widgetId, launchIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            ))
             if (cached == null) {
                 // dirSizeAsync fires its callback on the main thread; the widget
-                // refresh itself does file I/O (directory listing, canonicalization,
-                // cache lookup), so dispatch it to a background thread to avoid
+                // refresh itself does file I/O (directory listing, cache
+                // lookup), so dispatch it to a background thread to avoid
                 // blocking the main thread / triggering ANRs on first refresh.
                 Format.dirSizeAsync(rootfsDir) { bytes ->
                     if (bytes >= 0) {
@@ -90,6 +66,13 @@ class RedTWidgetProvider : AppWidgetProvider() {
                 }
             }
         }
+        views.setOnClickPendingIntent(R.id.widget_root, PendingIntent.getActivity(
+            context, widgetId,
+            Intent(context, TerminalActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        ))
         appWidgetManager.updateAppWidget(widgetId, views)
     }
 }

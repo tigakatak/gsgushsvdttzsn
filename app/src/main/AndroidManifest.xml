@@ -58,11 +58,6 @@
             </intent-filter>
         </service>
 
-        <activity
-            android:name=".ui.WidgetConfigActivity"
-            android:exported="true"
-            android:theme="@style/Theme.RedTApp" />
-
         <receiver
             android:name=".ui.RedTWidgetProvider"
             android:exported="true">

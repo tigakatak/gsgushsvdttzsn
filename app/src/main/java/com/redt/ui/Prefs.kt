@@ -10,7 +10,6 @@ object Prefs {
     const val KEY_SCROLLBACK = "scrollback"
     const val KEY_AUTOHIDE_KEYS = "autohide_keys"
     const val KEY_WAKELOCK = "wakelock"
-    const val KEY_LAST_DISTRO = "last_distro"
 
     const val SCROLLBACK_DEFAULT = 4
     const val FONT_SIZE_DEFAULT = 20
@@ -32,8 +31,6 @@ object Prefs {
 }
 
 fun Context.prefs(): SharedPreferences = getSharedPreferences(Prefs.NAME, Context.MODE_PRIVATE)
-
-fun String.capitalized(): String = replaceFirstChar { it.uppercase() }
 
 fun simpleSeekBarListener(onProgress: (Int) -> Unit): SeekBar.OnSeekBarChangeListener =
     object : SeekBar.OnSeekBarChangeListener {

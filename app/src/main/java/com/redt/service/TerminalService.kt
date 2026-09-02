@@ -11,14 +11,13 @@ import android.util.Log
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.redt.R
-import com.redt.distro.DistroInstaller
+import com.redt.distro.DistroRegistry
 import com.redt.RedTApp
 import com.redt.proot.ProotInstaller
 import com.redt.ui.themeColor
 import com.redt.ui.Prefs
 import com.redt.ui.TerminalActivity
 import com.redt.ui.RedTWidgetProvider
-import com.redt.ui.capitalized
 import com.redt.ui.prefs
 import com.redt.session.terminalSessionStore
 import com.termux.terminal.TerminalSession
@@ -40,19 +39,11 @@ class TerminalService : Service() {
         const val ACTION_AUTO_RELEASE = "com.redt.action.AUTO_RELEASE"
         const val ACTION_EXIT = "com.redt.action.EXIT"
         const val ACTION_CREATE_SESSION = "com.redt.action.CREATE_SESSION"
-        const val EXTRA_DISTRO = "distro"
 
         private fun terminalPendingIntent(context: Context): PendingIntent =
             PendingIntent.getActivity(
                 context, 0,
                 Intent(context, TerminalActivity::class.java).apply {
-                    // Fall back to an installed distro when the last-used one
-                    // has been removed, so the notification never opens the
-                    // terminal with an invalid distro name.
-                    val installed = DistroInstaller(context).getInstalledDistros()
-                    val last = context.prefs().getString(Prefs.KEY_LAST_DISTRO, null)
-                    val distro = installed.firstOrNull { it == last } ?: installed.firstOrNull()
-                    distro?.let { putExtra(TerminalActivity.EXTRA_DISTRO, it) }
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
                 },
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -66,7 +57,7 @@ class TerminalService : Service() {
     private var exiting = false
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val launchScripts = IdentityHashMap<TerminalSession, File>()
-    private val pendingDistros = mutableSetOf<String>()
+    private var sessionStarting = false
     private val sessionStore by lazy { terminalSessionStore }
     private val launcher by lazy { SessionLauncher(applicationContext) }
 
@@ -85,7 +76,7 @@ class TerminalService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, RedTApp.CHANNEL_TERMINAL)
-            .setContentTitle("RedT - ${getDistroName()}")
+            .setContentTitle("RedT - Alpine")
             .setContentText("${sessionStore.sessions.value.size} session(s) | Tap to open")
             .setSmallIcon(com.redt.R.drawable.ic_notification)
             .setColor(themeAccent())
@@ -123,8 +114,7 @@ class TerminalService : Service() {
                 updateWakeLock()
             }
             ACTION_CREATE_SESSION -> {
-                val distro = intent.getStringExtra(EXTRA_DISTRO)
-                if (distro != null) createSession(distro) else stopIfIdle()
+                createSession()
             }
             ACTION_EXIT -> {
                 exiting = true
@@ -158,7 +148,7 @@ class TerminalService : Service() {
         super.onDestroy()
     }
 
-    private fun createSession(distroName: String) {
+    private fun createSession() {
         if (exiting) return
         if (!ProotInstaller.isInstalled(applicationContext)) {
             Toast.makeText(
@@ -169,18 +159,19 @@ class TerminalService : Service() {
             stopIfIdle()
             return
         }
-        if (!pendingDistros.add(distroName)) {
+        if (sessionStarting) {
             Toast.makeText(
                 this,
-                "A session for $distroName is already starting",
+                "A session is already starting",
                 Toast.LENGTH_SHORT,
             ).show()
             return
         }
+        sessionStarting = true
         serviceScope.launch {
             var launchScript: File? = null
             try {
-                val spec = withContext(Dispatchers.IO) { launcher.prepare(distroName) }
+                val spec = withContext(Dispatchers.IO) { launcher.prepare() }
                 if (exiting) {
                     spec.launchScript.delete()
                     return@launch
@@ -195,25 +186,25 @@ class TerminalService : Service() {
                     spec.scrollbackRows,
                     bridge,
                 ).apply {
-                    mSessionName = distroName
+                    mSessionName = DistroRegistry.alpine.name
                 }
                 synchronized(launchScripts) {
                     launchScripts[session] = spec.launchScript
                 }
-                sessionStore.addSession(session, distroName, bridge)
+                sessionStore.addSession(session, bridge)
                 sessionStore.switchToSession(session)
                 updateNotification()
                 RedTWidgetProvider.updateAll(this@TerminalService)
             } catch (e: Exception) {
                 launchScript?.delete()
-                Log.e("TerminalService", "Failed to launch $distroName", e)
+                Log.e("TerminalService", "Failed to launch Alpine", e)
                 Toast.makeText(
                     this@TerminalService,
-                    "Failed to launch $distroName: ${e.message}",
+                    "Failed to launch Alpine: ${e.message}",
                     Toast.LENGTH_LONG,
                 ).show()
             } finally {
-                pendingDistros.remove(distroName)
+                sessionStarting = false
                 stopIfIdle()
             }
         }
@@ -290,13 +281,6 @@ class TerminalService : Service() {
     private fun releaseWakeLock() {
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
-    }
-
-    private fun getDistroName(): String {
-        val prefs = prefs()
-        prefs.getString(Prefs.KEY_LAST_DISTRO, null)?.let { return it.capitalized() }
-        val dir = File(filesDir, "installed")
-        return dir.list()?.sorted()?.firstOrNull()?.capitalized() ?: "Terminal"
     }
 
     private fun themeAccent(): Int = themeColor(R.attr.themeAccent, 0xFF89B4FA.toInt())
