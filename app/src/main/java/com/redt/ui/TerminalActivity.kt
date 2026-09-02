@@ -98,13 +98,6 @@ class TerminalActivity : AppCompatActivity() {
         backend.onEmulatorReady = { applyEmulatorColors(backend.view) }
     }
 
-    private fun copyText(text: String) {
-        val clip = getSystemService(android.content.ClipboardManager::class.java)
-        clip.setPrimaryClip(android.content.ClipData.newPlainText("terminal", text))
-        Toast.makeText(this, "Copied", Toast.LENGTH_SHORT).show()
-    }
-
-
     override fun onCreate(savedInstanceState: Bundle?) {
         AppTheme.apply(this)
         super.onCreate(savedInstanceState)

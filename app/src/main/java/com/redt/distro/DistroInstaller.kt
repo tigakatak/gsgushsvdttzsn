@@ -11,7 +11,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
-import org.apache.commons.compress.compressors.xz.XZCompressorInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 import java.io.BufferedInputStream
 import java.io.File
@@ -105,7 +104,6 @@ class DistroInstaller(private val context: Context) {
     private fun cachedTarballName(distro: Distro): String {
         val url = distro.tarballUrl()
         return when {
-            url.endsWith(".tar.xz", true) -> "${distro.name}.tar.xz"
             url.endsWith(".tar.gz", true) -> "${distro.name}.tar.gz"
             else -> "${distro.name}.tar"
         }
@@ -189,7 +187,7 @@ class DistroInstaller(private val context: Context) {
             try {
                 val distro = DistroRegistry.allDistros.firstOrNull { it.name == distroName }
                 val cached = if (distro != null) cachedTarballFile(distro)
-                else File(tarballDir(), "$distroName.tar.xz")
+                else File(tarballDir(), "$distroName.tar.gz")
                 cached.delete()
                 // The .part file is intentionally kept: a fresh attempt
                 // resumes from it instead of restarting the download.
@@ -241,9 +239,8 @@ class DistroInstaller(private val context: Context) {
             val total = if (rangeLen > 0) resumeOffset + rangeLen else -1L
             if (total > 0) {
                 // Incoming bytes plus room for the extracted rootfs
-                // (xz decompresses roughly 3:1, gz roughly 2:1).
-                val expansion = if (dest.name.endsWith(".tar.xz", true)) 3L else 2L
-                requireFreeSpace((total - resumeOffset) + total * expansion, "installing ${dest.name}")
+                // (gz decompresses roughly 2:1).
+                requireFreeSpace((total - resumeOffset) + total * 2L, "installing ${dest.name}")
             }
 
             val buffer = ByteArray(8192)
@@ -304,10 +301,6 @@ class DistroInstaller(private val context: Context) {
         }
     }
 
-    /** Rough decompressed size: xz ~3:1, gz ~2:1. */
-    private fun extractionSpaceFor(file: File): Long =
-        file.length() * (if (file.name.endsWith(".tar.xz", true)) 3L else 2L)
-
     private fun requireFreeSpace(needed: Long, what: String) {
         if (needed <= 0) return
         val stat = StatFs(context.filesDir.absolutePath)
@@ -321,124 +314,16 @@ class DistroInstaller(private val context: Context) {
         }
     }
 
-    private fun getNativeXz(): File? {
-        val abis = android.os.Build.SUPPORTED_64_BIT_ABIS
-        if (abis.isEmpty() || abis[0] != "arm64-v8a") return null
-        val xzDir = File(context.codeCacheDir, "xz")
-        val xzBin = File(xzDir, "xz")
-        val xzLib = File(xzDir, "liblzma.so.5")
-        if (xzBin.canExecute() && xzLib.canRead()) return xzBin
-        try {
-            xzDir.mkdirs()
-            context.assets.open("xz/lib/liblzma.so.5").use { input ->
-                FileOutputStream(xzLib).use { input.copyTo(it) }
-            }
-            xzLib.setReadable(true, false)
-            context.assets.open("xz/bin/xz").use { input ->
-                FileOutputStream(xzBin).use { input.copyTo(it) }
-            }
-            xzBin.setReadable(true, false)
-            xzBin.setExecutable(true, false)
-            if (xzBin.canExecute()) return xzBin
-        } catch (e: Exception) {
-            Log.w("DistroInstaller", "Native xz not available", e)
-            xzBin.delete()
-            xzLib.delete()
-        }
-        return null
-    }
-
     private suspend fun extractTarball(
         tarball: File,
         dest: File,
         onProgress: (Progress) -> Unit,
         gen: Int
     ) = withContext(Dispatchers.IO) {
-        if (tarball.name.endsWith(".tar.gz", true)) {
-            extractWithJavaGz(tarball, dest, onProgress, gen)
-            return@withContext
+        if (!tarball.name.endsWith(".tar.gz", true)) {
+            throw Exception("Unsupported archive format: ${tarball.name}")
         }
-        val nativeXz = getNativeXz()
-        if (nativeXz != null) {
-            try {
-                extractWithNativeXz(nativeXz, tarball, dest, onProgress, gen)
-            } catch (e: CancelledException) {
-                throw e
-            } catch (e: Exception) {
-                Log.w("DistroInstaller", "Native xz failed, falling back to Java", e)
-                extractWithJavaXz(tarball, dest, onProgress, gen)
-            }
-        } else {
-            extractWithJavaXz(tarball, dest, onProgress, gen)
-        }
-    }
-
-    private fun extractWithNativeXz(
-        xzBin: File, tarball: File, dest: File,
-        onProgress: (Progress) -> Unit,
-        gen: Int
-    ) {
-        val pb = ProcessBuilder(xzBin.absolutePath, "-dc", tarball.absolutePath)
-        pb.environment()["LD_LIBRARY_PATH"] = xzBin.parentFile!!.absolutePath
-        pb.redirectErrorStream(true)
-        val process = pb.start()
-        // Watchdog: native xz runs outside the coroutine; if it stalls the
-        // blocking read below never reaches checkCancel. Kill it so the Java
-        // fallback takes over instead of hanging the install forever.
-        val watchdog = Thread {
-            try {
-                if (!process.waitFor(NATIVE_XZ_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)) {
-                    killProcess(process)
-                }
-            } catch (_: Exception) {
-                // best-effort; nothing else to clean up
-            }
-        }
-        watchdog.isDaemon = true
-        watchdog.start()
-        try {
-            var streamCompleted = false
-            var entryCount = 0
-            process.inputStream.use { input ->
-                val counter = CountingInputStream(input)
-                BufferedInputStream(counter, 65536).use { bis ->
-                    TarArchiveInputStream(bis).use { tarIn ->
-                        // Native xz reads the compressed file itself; the only byte
-                        // stream we can observe here is the *decompressed* output, so
-                        // fall back to a rough 3:1 ratio (xz typically achieves 3-5:1).
-                        val approxDecompressedTotal = tarball.length() * 3L
-                        entryCount = extractTarEntries(tarIn, dest, approxDecompressedTotal, onProgress, gen) { counter.bytesRead }
-                    }
-                }
-                streamCompleted = true
-            }
-            if (!process.waitFor(NATIVE_XZ_EXIT_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)) {
-                killProcess(process)
-                throw Exception("Native xz decompressor timed out, falling back")
-            }
-            val exitCode = process.exitValue()
-            if (exitCode != 0 && (!streamCompleted || entryCount == 0)) {
-                throw Exception("Native xz decompressor failed (exit $exitCode), falling back")
-            }
-            if (exitCode != 0) {
-                Log.w("DistroInstaller", "xz exited with $exitCode after valid output; continuing")
-            }
-        } catch (e: CancelledException) {
-            killProcess(process)
-            throw e
-        } catch (e: Exception) {
-            killProcess(process)
-            throw e
-        }
-    }
-
-    private fun killProcess(process: Process) {
-        process.destroy()
-        try {
-            process.destroyForcibly().waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
-        } catch (_: Exception) {
-            // best-effort; the SIGTERM from destroy() is still in flight
-        }
+        extractWithJavaGz(tarball, dest, onProgress, gen)
     }
 
     /**
@@ -461,28 +346,6 @@ class DistroInstaller(private val context: Context) {
             val n = inner.read(b, off, len)
             if (n > 0) bytesRead += n
             return n
-        }
-    }
-
-    private fun extractWithJavaXz(
-        tarball: File, dest: File,
-        onProgress: (Progress) -> Unit,
-        gen: Int
-    ) {
-        try {
-            val total = tarball.length()
-            FileInputStream(tarball).use { fis ->
-                val counter = CountingInputStream(fis)
-                XZCompressorInputStream(counter).use { xzIn ->
-                    BufferedInputStream(xzIn, 65536).use { bis ->
-                        TarArchiveInputStream(bis).use { tarIn ->
-                            extractTarEntries(tarIn, dest, total, onProgress, gen) { counter.bytesRead }
-                        }
-                    }
-                }
-            }
-        } catch (e: NoClassDefFoundError) {
-            throw Exception("Missing compression library: ${e.message}")
         }
     }
 
@@ -730,62 +593,6 @@ class DistroInstaller(private val context: Context) {
         file.appendText(text)
     }
 
-    suspend fun setupRootfs(rootfs: File) {
-        migrateNestedRootfs(rootfs)
-        val uid = android.os.Process.myUid()
-        val passwd = File(rootfs, "etc/passwd")
-        if (!passwd.exists() || !passwd.readText().contains(":$uid:")) {
-            passwd.parentFile?.mkdirs()
-            safeAppendText(passwd, "root:x:$uid:0:root:/root:/bin/sh\n")
-        }
-        ensureSupplementaryGroups(rootfs)
-        val hosts = File(rootfs, "etc/hosts")
-        if (!hosts.exists() || !hosts.readText().contains("127.0.0.1")) {
-            hosts.parentFile?.mkdirs()
-            safeWriteText(hosts, "127.0.0.1 localhost\n::1 localhost\n")
-        }
-        writeResolvConf(rootfs)
-        val fstab = File(rootfs, "etc/fstab")
-        if (!fstab.exists()) {
-            safeWriteText(fstab, "none /proc proc defaults 0 0\nnone /sys sysfs defaults 0 0\n")
-        }
-        createDeviceNodes(rootfs)
-        repairRootfs(rootfs)
-    }
-
-    /**
-     * One-time fixup (install time only): some tarballs wrap the whole rootfs
-     * in a single top-level directory (e.g. <name>-rootfs/). Only migrate when
-     * the root itself has no bin/ layout and exactly one subdirectory holds it.
-     */
-    private suspend fun migrateNestedRootfs(rootfs: File) {
-        if (File(rootfs, "bin").isDirectory) return
-        val subdirs = rootfs.listFiles()?.filter { it.isDirectory } ?: return
-        if (subdirs.size != 1) return
-        val subdir = subdirs.single()
-        if (!File(subdir, "bin").isDirectory) return
-        Log.i("DistroInstaller", "Found nested rootfs in ${subdir.name}/, migrating...")
-        var copyOk = true
-        subdir.listFiles()?.forEach { file ->
-            val dest = File(rootfs, file.name)
-            if (file.isDirectory) {
-                if (!file.copyRecursively(dest, overwrite = true)) copyOk = false
-            } else {
-                try {
-                    file.copyTo(dest, overwrite = true)
-                } catch (_: Exception) {
-                    copyOk = false
-                }
-            }
-        }
-        if (copyOk) {
-            deleteRootfsSafe(subdir)
-            Log.i("DistroInstaller", "Migrated files from ${subdir.name}/ to rootfs")
-        } else {
-            Log.w("DistroInstaller", "WARN: Failed to fully migrate ${subdir.name}/")
-        }
-    }
-
     private fun fixupDirectoryPermissions(rootfs: File) {
         rootfs.walkTopDown().filter { it.isDirectory }.forEach { d ->
             d.setReadable(true, false)
@@ -865,9 +672,6 @@ class DistroInstaller(private val context: Context) {
         return repairs.joinToString("\n")
     }
 
-    fun isInstalled(distroName: String): Boolean =
-        File(context.filesDir, "installed/${validateDistroName(distroName)}").exists()
-
     fun getRootfsDir(distroName: String): File {
         val validName = validateDistroName(distroName)
 
@@ -934,8 +738,6 @@ class DistroInstaller(private val context: Context) {
     }
 
     private companion object {
-        const val NATIVE_XZ_TIMEOUT_SECONDS = 300L
-        const val NATIVE_XZ_EXIT_TIMEOUT_SECONDS = 60L
         const val PROGRESS_EMIT_INTERVAL_MS = 100L
 
         /**
@@ -956,10 +758,5 @@ class DistroInstaller(private val context: Context) {
             DocumentsContract.buildChildDocumentsUri(authority, "root"),
             null,
         )
-    }
-
-    private fun createDeviceNodes(rootfs: File) {
-        val devDir = File(rootfs, "dev")
-        devDir.mkdirs()
     }
 }

@@ -104,10 +104,8 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.viewpager2:viewpager2:1.1.0")
     implementation("com.google.android.material:material:1.14.0")
-    implementation("androidx.constraintlayout:constraintlayout:2.2.2")
 
     implementation("org.apache.commons:commons-compress:1.28.0")
-    implementation("org.tukaani:xz:1.12")
 
     implementation("com.github.termux.termux-app:terminal-emulator:v0.118.3")
     implementation(project(":core:terminal-view"))

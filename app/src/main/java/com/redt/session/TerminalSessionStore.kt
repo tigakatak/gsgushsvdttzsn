@@ -112,32 +112,6 @@ internal class TerminalSessionStore {
     fun signalExit() {
         _exitSignal.tryEmit(Unit)
     }
-
-    fun removeSessionsForDistro(distroName: String) {
-        synchronized(this) {
-            val current = _sessions.value
-            val removed = mutableListOf<TerminalSession>()
-            var removedBeforeCurrent = 0
-            val kept = current.filterIndexed { i, s ->
-                if (sessionDistros[s].equals(distroName, ignoreCase = true)) {
-                    removed.add(s)
-                    if (i < _currentIndex.value) removedBeforeCurrent++
-                    false
-                } else {
-                    true
-                }
-            }
-            _sessions.value = kept
-            removed.forEach { sessionDistros.remove(it) }
-            removed.forEach { sessionClients.remove(it)?.detachAll() }
-            removed.forEach { it.finishIfRunning() }
-            _currentIndex.value = if (kept.isEmpty()) {
-                -1
-            } else {
-                (_currentIndex.value - removedBeforeCurrent).coerceIn(0, kept.size - 1)
-            }
-        }
-    }
 }
 
 internal val Context.terminalSessionStore: TerminalSessionStore

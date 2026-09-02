@@ -5,10 +5,8 @@ object DistroRegistry {
         Distro(
             name = "alpine",
             displayName = "Alpine Linux 3.24.1",
-            description = "Minimal (~5MB), fast, security-focused. Recommended for low disk space.",
             baseUrl = "https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/aarch64/alpine-minirootfs-3.24.1-aarch64.tar.gz",
             sha256 = "f55a90f69052c5bd6f92cb09a8f47065970830b194c917a006fb94028e721259",
-            packageManager = "apk"
         ),
     )
 }
