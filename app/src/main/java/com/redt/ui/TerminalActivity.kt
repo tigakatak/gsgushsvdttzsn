@@ -8,10 +8,12 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MenuItem
 import android.view.View
+import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
@@ -26,6 +28,8 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.viewpager2.widget.ViewPager2
 import com.redt.R
 import com.redt.distro.DistroInstaller
+import com.redt.distro.DistroRegistry
+import com.redt.proot.ProotInstaller
 import com.redt.session.terminalSessionStore
 import com.redt.service.TerminalService
 import com.redt.util.Format
@@ -35,6 +39,7 @@ import com.termux.view.TerminalView
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -54,6 +59,7 @@ class TerminalActivity : AppCompatActivity() {
     private var inputField: EditText? = null
 
     private var terminalBackend: TerminalBackend? = null
+    private val installer by lazy { DistroInstaller(applicationContext) }
 
     internal fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
@@ -120,6 +126,12 @@ class TerminalActivity : AppCompatActivity() {
         ) {
             requestNotificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
+        // Clean up disk usage not owned by any visible feature: rootfs husks
+        // from interrupted installs and stale download files.
+        lifecycleScope.launch(Dispatchers.IO) {
+            installer.sweepOrphanFiles()
+        }
+
 
         distroName = intent?.getStringExtra(EXTRA_DISTRO) ?: "alpine"
         prefs()
@@ -192,7 +204,7 @@ class TerminalActivity : AppCompatActivity() {
                 sessionStore.attachClient(s, backend)
             }
             backend.applyFontSize()
-            terminalView.setBackgroundColor(terminalBgWithAlpha())
+            terminalView.setBackgroundColor(resolveTerminalColors().first)
             val target = sessionStore.indexOfSessionForDistro(distroName)
             if (target >= 0) {
                 sessionStore.switchToSession(sessions[target])
@@ -228,7 +240,7 @@ class TerminalActivity : AppCompatActivity() {
                     val backend = ensureTerminalBackend()
                     if (terminalView.mRenderer == null) {
                         backend.applyFontSize()
-                        terminalView.setBackgroundColor(terminalBgWithAlpha())
+                        terminalView.setBackgroundColor(resolveTerminalColors().first)
                     }
                     active.forEach { sessionStore.attachClient(it, backend) }
                     if (active.isEmpty()) {
@@ -237,7 +249,7 @@ class TerminalActivity : AppCompatActivity() {
                         // empty too). onSessionFinished races with the store
                         // update, so decide navigation here, not in the callback.
                         if (sawActiveSession && !exitingApp) {
-                            navigateToMainMenu()
+                            exitApp()
                         }
                         updateDrawer()
                         return@collect
@@ -265,7 +277,7 @@ class TerminalActivity : AppCompatActivity() {
 
     private fun updateDistroSizeLabel() {
         val displayedDistro = distroName
-        val rootfsDir = DistroInstaller(applicationContext).getRootfsDir(displayedDistro)
+        val rootfsDir = installer.getRootfsDir(displayedDistro)
         val sizeLabel = findViewById<TextView>(R.id.distro_size_label)
         val cached = Format.cachedSize(rootfsDir)
         sizeLabel.text = if (cached != null) {
@@ -520,9 +532,9 @@ class TerminalActivity : AppCompatActivity() {
         get() = if (currentIndex in sessions.indices) sessions[currentIndex] else null
 
     private fun requestNewSession(requestedDistro: String) {
-        val rootfsDir = DistroInstaller(applicationContext).getRootfsDir(requestedDistro)
+        val rootfsDir = installer.getRootfsDir(requestedDistro)
         if (!rootfsDir.exists()) {
-            showError("Distro $requestedDistro not installed.\nRun installer first.")
+            ensureDistroInstalled(requestedDistro)
             return
         }
         ContextCompat.startForegroundService(
@@ -557,19 +569,19 @@ class TerminalActivity : AppCompatActivity() {
         RedTWidgetProvider.updateAll(this)
     }
 
-    private fun navigateToMainMenu() {
+    private fun exitApp() {
+        // The last session ended (exit typed or drawer close): RedT has no
+        // hub screen anymore, so close the whole task including Settings
+        // stacked on top of the terminal.
         if (!isFinishing && !isDestroyed) {
-            startActivity(Intent(this, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            })
-            finish()
+            finishAffinity()
         }
     }
 
     private fun closeSession(index: Int) {
         // Closing the last session is allowed: the store becomes empty and
-        // observeSessions() navigates back to the main menu, exactly like
-        // typing `exit` in the shell (README §5.3).
+        // observeSessions() closes the app, exactly like typing `exit` in
+        // the shell.
         sessionStore.removeSession(index)
         if (currentIndex in sessions.indices) {
             terminalView.attachSession(sessions[currentIndex])
@@ -753,6 +765,116 @@ class TerminalActivity : AppCompatActivity() {
         terminalView.visibility = android.view.View.VISIBLE
     }
 
+    private var installOverlay: LinearLayout? = null
+    private var installProgressBar: ProgressBar? = null
+    private var installStatusText: TextView? = null
+    private var installJob: Job? = null
+
+    /**
+     * The app opens straight into the terminal: a missing distro rootfs is
+     * downloaded and extracted here before the first session is created.
+     */
+    private fun ensureDistroInstalled(name: String) {
+        if (installJob?.isActive == true) return
+        val distro = DistroRegistry.allDistros.firstOrNull { it.name == name }
+        if (distro == null) {
+            showError("Unknown distro: $name")
+            return
+        }
+        showInstallOverlay(distro.displayName)
+        installJob = lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    check(ProotInstaller.isInstalled(applicationContext)) {
+                        getString(R.string.proot_extraction_failed)
+                    }
+                    installer.install(distro) { progress ->
+                        runOnUiThread { renderInstallProgress(progress) }
+                    }
+                }
+                clearInstallOverlay()
+                updateDistroSizeLabel()
+                Toast.makeText(this@TerminalActivity, "${distro.displayName} installed", Toast.LENGTH_SHORT).show()
+                requestNewSession(name)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: DistroInstaller.CancelledException) {
+                showInstallFailed("Installation cancelled")
+            } catch (e: Exception) {
+                showInstallFailed(e.message ?: "Unknown error")
+            }
+        }
+    }
+
+    private fun showInstallOverlay(displayName: String) {
+        clearErrorOverlay()
+        clearInstallOverlay()
+        terminalView.visibility = android.view.View.GONE
+        val parent = terminalView.parent as? ViewGroup ?: return
+        val textColor = themeColor(R.attr.terminalText, 0xFFCDD6F4.toInt())
+        val status = TextView(this).apply {
+            text = "Preparing..."
+            setTextColor(textColor)
+            textSize = 14f
+        }
+        val bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progress = 0
+        }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(24), dp(24), dp(24))
+            addView(TextView(this@TerminalActivity).apply {
+                text = "Installing $displayName..."
+                setTextColor(textColor)
+                textSize = 16f
+                setPadding(0, 0, 0, dp(12))
+            })
+            addView(bar)
+            addView(status.apply { setPadding(0, dp(8), 0, 0) })
+        }
+        installProgressBar = bar
+        installStatusText = status
+        installOverlay = box
+        parent.addView(box)
+    }
+
+    private fun renderInstallProgress(progress: DistroInstaller.Progress) {
+        val bar = installProgressBar ?: return
+        val text = installStatusText ?: return
+        if (progress.percent < 0) {
+            bar.isIndeterminate = true
+            text.text = progress.speed
+        } else {
+            bar.isIndeterminate = false
+            bar.progress = progress.percent
+            text.text = "${progress.percent}% - ${progress.speed}"
+        }
+    }
+
+    private fun clearInstallOverlay() {
+        installOverlay?.let { (it.parent as? ViewGroup)?.removeView(it) }
+        installOverlay = null
+        installProgressBar = null
+        installStatusText = null
+        terminalView.visibility = android.view.View.VISIBLE
+    }
+
+    private fun showInstallFailed(message: String) {
+        val text = installStatusText ?: return
+        text.text = "Install failed:\n$message"
+        text.setTextColor(0xFFFF6B6B.toInt())
+        installProgressBar?.visibility = android.view.View.GONE
+        val overlay = installOverlay ?: return
+        if (overlay.getChildAt(overlay.childCount - 1) !is Button) {
+            overlay.addView(Button(this).apply {
+                text = "Retry"
+                setOnClickListener { ensureDistroInstalled(distroName) }
+            })
+        }
+    }
+
+
     private fun startForegroundService() {
         try {
             ContextCompat.startForegroundService(this, Intent(this, TerminalService::class.java))
@@ -788,7 +910,7 @@ class TerminalActivity : AppCompatActivity() {
         // Packages installed inside the guest change the rootfs while this
         // screen is open; drop the size cache so the next label recomputes
         // instead of showing a value up to the cache TTL stale.
-        com.redt.util.Format.invalidate(DistroInstaller(applicationContext).getRootfsDir(distroName))
+        com.redt.util.Format.invalidate(installer.getRootfsDir(distroName))
         if (sessions.isNotEmpty()) {
             sendServiceAction(TerminalService.ACTION_AUTO_WAKE)
         }
@@ -821,6 +943,10 @@ class TerminalActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         RedTWidgetProvider.updateAll(this)
+        if (installJob?.isActive == true) {
+            installer.cancel()
+            installJob?.cancel()
+        }
         terminalBackend?.let {
             sessionStore.detachClient(it)
             it.onSessionFinished = null
@@ -871,6 +997,7 @@ class TerminalActivity : AppCompatActivity() {
         menu.add(0, 12, 0, "Copy")
         menu.add(0, 13, 0, "Paste")
         menu.add(0, 14, 0, "Export")
+        menu.add(0, 15, 0, "Settings")
     }
 
     private fun resolveTerminalColors(): Triple<Int, Int, Int> = Triple(
@@ -878,14 +1005,6 @@ class TerminalActivity : AppCompatActivity() {
         themeColor(R.attr.extraKeysBg, 0xFF181825.toInt()),
         themeColor(R.attr.terminalText, 0xFFCDD6F4.toInt())
     )
-
-    private fun colorWithAlpha(color: Int): Int {
-        val opacity = prefs().getInt("terminal_opacity", 10).coerceIn(0, 10)
-        val alpha = (opacity * 25.5).toInt().coerceIn(0, 255)
-        return (color and 0x00FFFFFF) or (alpha shl 24)
-    }
-
-    private fun terminalBgWithAlpha(): Int = colorWithAlpha(resolveTerminalColors().first)
 
     private fun applyEmulatorColors(view: TerminalView) {
         val emulator = view.mEmulator ?: return
@@ -899,11 +1018,9 @@ class TerminalActivity : AppCompatActivity() {
 
     private fun applyTerminalColors() {
         val (bg, extraBg, textColor) = resolveTerminalColors()
-        val bgWithAlpha = colorWithAlpha(bg)
-        val extraBgWithAlpha = colorWithAlpha(extraBg)
-        terminalView.setBackgroundColor(bgWithAlpha)
+        terminalView.setBackgroundColor(bg)
         drawerLayout.setBackgroundColor(bg)
-        extraKeysWrapper.setBackgroundColor(extraBgWithAlpha)
+        extraKeysWrapper.setBackgroundColor(extraBg)
         terminalBgLayer?.setBackgroundColor(bg)
         rootContainer?.setBackgroundColor(bg)
         for (row in listOf(row1Container, row2Container)) {
@@ -922,7 +1039,8 @@ class TerminalActivity : AppCompatActivity() {
             12 -> { copySelectedText(); true }
             13 -> { pasteClipboard(); true }
             14 -> { exportCurrentOutput(); true }
-             else -> super.onContextItemSelected(item)
+            15 -> { startActivity(Intent(this, SettingsActivity::class.java)); true }
+            else -> super.onContextItemSelected(item)
         }
     }
 

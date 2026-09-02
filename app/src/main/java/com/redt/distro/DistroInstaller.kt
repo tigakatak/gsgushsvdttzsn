@@ -10,12 +10,9 @@ import com.redt.ui.Prefs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
-import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
-import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream
 import org.apache.commons.compress.compressors.xz.XZCompressorInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
-import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileInputStream
@@ -102,52 +99,6 @@ class DistroInstaller(private val context: Context) {
         }
     }
 
-    suspend fun installFromFile(
-        tarball: File,
-        distroName: String,
-        onProgress: (Progress) -> Unit
-    ) = withContext(Dispatchers.IO) {
-        val gen = beginJob()
-        try {
-            val rootfsDir = getRootfsDir(distroName)
-            if (rootfsDir.exists()) {
-                deleteRootfsSafe(rootfsDir)
-            }
-            rootfsDir.mkdirs()
-
-            requireFreeSpace(extractionSpaceFor(tarball), "extracting ${tarball.name}")
-            if (tarball.name.endsWith(".tar.xz")) {
-                extractTarball(tarball, rootfsDir, onProgress, gen)
-            } else {
-                extractWithJavaGz(tarball, rootfsDir, onProgress, gen)
-            }
-            checkCancel(gen)
-
-            if (!File(rootfsDir, "etc/os-release").exists() &&
-                !File(rootfsDir, "bin/busybox").exists()
-            ) {
-                throw Exception("File does not look like a Linux rootfs")
-            }
-
-            fixupDirectoryPermissions(rootfsDir)
-            setupRootfs(rootfsDir)
-            com.redt.util.Format.invalidate(rootfsDir)
-            saveInstalled(distroName)
-            Log.i("DistroInstaller", "Install from file complete for $distroName")
-        } catch (e: CancelledException) {
-            Log.i("DistroInstaller", "Install from file cancelled for $distroName")
-            cleanup(distroName, gen)
-            throw e
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            cleanup(distroName, gen)
-            throw e
-        } catch (e: Exception) {
-            Log.e("DistroInstaller", "Install from file failed", e)
-            cleanup(distroName, gen)
-            throw Exception("Install from file failed: ${e.message}", e)
-        }
-    }
-
     private fun tarballDir(): File =
         File(context.filesDir, "tarballs").apply { mkdirs() }
 
@@ -162,61 +113,6 @@ class DistroInstaller(private val context: Context) {
 
     private fun cachedTarballFile(distro: Distro): File =
         File(tarballDir(), cachedTarballName(distro))
-
-    /**
-     * Restores a distro to its freshly extracted state: wipes installed
-     * packages, caches and shell configs. Uses the cached base tarball when
-     * available, otherwise falls back to a fresh download.
-     */
-    suspend fun resetToDefault(
-        distroName: String,
-        onProgress: (Progress) -> Unit
-    ): Boolean = withContext(Dispatchers.IO) {
-        val gen = beginJob()
-        val distro = com.redt.distro.DistroRegistry.allDistros
-            .firstOrNull { it.name == distroName }
-        if (distro == null) return@withContext false
-        try {
-            val rootfsDir = getRootfsDir(distroName)
-            if (rootfsDir.exists()) {
-                deleteRootfsSafe(rootfsDir)
-            }
-            rootfsDir.mkdirs()
-
-            val tarball = cachedTarballFile(distro)
-            if (!tarball.exists()) {
-                install(distro, onProgress)
-                return@withContext true
-            }
-            val expectedSha = distro.sha256
-            if (expectedSha.isNotEmpty()) {
-                verifyChecksum(tarball, expectedSha)
-            }
-            checkCancel(gen)
-            requireFreeSpace(extractionSpaceFor(tarball), "resetting $distroName")
-            extractTarball(tarball, rootfsDir, onProgress, gen)
-            checkCancel(gen)
-            fixupDirectoryPermissions(rootfsDir)
-            setupRootfs(rootfsDir)
-            com.redt.util.Format.invalidate(rootfsDir)
-            saveInstalled(distroName)
-            if (!tarball.delete() && tarball.exists()) {
-                Log.w("DistroInstaller", "Could not delete cached tarball ${tarball.name}")
-            }
-            Log.i("DistroInstaller", "Reset complete for $distroName")
-            true
-        } catch (e: CancelledException) {
-            cleanup(distroName, gen)
-            false
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            cleanup(distroName, gen)
-            throw e
-        } catch (e: Exception) {
-            Log.e("DistroInstaller", "Reset failed", e)
-            cleanup(distroName, gen)
-            throw Exception("Reset failed: ${e.message}", e)
-        }
-    }
 
     class CancelledException : Exception("Installation cancelled")
 
@@ -612,17 +508,6 @@ class DistroInstaller(private val context: Context) {
         }
     }
 
-    /**
-     * Extracts a backup archive produced by [backup] (entries nested under a
-     * top-level dir named after the distro) into [dest]. Uses the bundled
-     * Java codecs instead of the device's tar, which fails on PAX/GNU
-     * long-name entries with only "exit code 1".
-     */
-    fun extractBackupArchive(backupFile: File, dest: File, onProgress: (Progress) -> Unit) {
-        requireFreeSpace(extractionSpaceFor(backupFile), "restoring ${backupFile.name}")
-        extractWithJavaGz(backupFile, dest, onProgress, generation.get())
-    }
-
     private fun extractTarEntries(
         tarIn: TarArchiveInputStream, dest: File,
         totalForProgress: Long,
@@ -787,57 +672,6 @@ class DistroInstaller(private val context: Context) {
         safeWriteText(resolv, guestDnsServers.joinToString("") { "nameserver $it\n" })
     }
 
-    private fun ensureCaCertificates(rootfs: File): String? {
-        val bundlePaths = listOf(
-            "etc/pki/tls/certs/ca-bundle.crt",
-            "etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
-            "etc/ssl/certs/ca-certificates.crt",
-            "etc/ssl/cert.pem",
-            "etc/ssl/certs/ca-bundle.crt"
-        )
-        val missing = bundlePaths.mapNotNull { path ->
-            val f = File(rootfs, path)
-            if (!f.exists() || f.length() == 0L) path else null
-        }
-        if (missing.isEmpty()) return null
-
-        val androidCertDirs = listOf(
-            File("/system/etc/security/cacerts"),
-            File("/apex/com.android.conscrypt/cacerts")
-        )
-        val certs = StringBuilder()
-        for (certDir in androidCertDirs) {
-            if (!certDir.isDirectory) continue
-            certDir.listFiles()?.forEach { certFile ->
-                if (certFile.isFile) {
-                    try {
-                        val content = certFile.readText()
-                        if (content.contains("BEGIN CERTIFICATE")) {
-                            certs.append(content)
-                            if (!content.endsWith("\n")) certs.append("\n")
-                        }
-                    } catch (_: Exception) {}
-                }
-            }
-        }
-        if (certs.isEmpty()) return null
-
-        val written = mutableListOf<String>()
-        for (path in missing) {
-            val bundle = File(rootfs, path)
-            bundle.delete()
-            bundle.parentFile?.mkdirs()
-            try {
-                safeWriteText(bundle, certs.toString())
-                bundle.setReadable(true, false)
-                written.add(path)
-            } catch (e: Exception) {
-                Log.w("DistroInstaller", "Failed to write CA bundle to $path: ${e.message}")
-            }
-        }
-        return if (written.isNotEmpty()) "Populated CA certificates: ${written.joinToString()}" else null
-    }
-
     private fun ensureSupplementaryGroups(rootfs: File) {
         val group = File(rootfs, "etc/group")
         group.parentFile?.mkdirs()
@@ -911,7 +745,6 @@ class DistroInstaller(private val context: Context) {
             safeWriteText(hosts, "127.0.0.1 localhost\n::1 localhost\n")
         }
         writeResolvConf(rootfs)
-        ensureCaCertificates(rootfs)
         val fstab = File(rootfs, "etc/fstab")
         if (!fstab.exists()) {
             safeWriteText(fstab, "none /proc proc defaults 0 0\nnone /sys sysfs defaults 0 0\n")
@@ -1029,8 +862,6 @@ class DistroInstaller(private val context: Context) {
             repairs.add("Created etc/resolv.conf")
         }
 
-        ensureCaCertificates(rootfs)?.let { repairs.add(it) }
-
         return repairs.joinToString("\n")
     }
 
@@ -1072,32 +903,6 @@ class DistroInstaller(private val context: Context) {
             ?: emptyList()
     }
 
-    suspend fun uninstall(distroName: String) {
-        val validName = validateDistroName(distroName)
-        val dir = getRootfsDir(validName)
-        // Give a dying proot session a moment to release its cwd, then retry
-        // briefly. A husk that survives this is swept by sweepOrphanFiles on
-        // the next app start, so waiting long here would only slow the UI.
-        kotlinx.coroutines.delay(300)
-        var attempts = 0
-        while (dir.exists() && attempts < 4) {
-            deleteRootfsSafe(dir)
-            attempts++
-            if (dir.exists()) kotlinx.coroutines.delay(400L * attempts)
-        }
-        if (dir.exists()) {
-            Log.w("DistroInstaller", "Rootfs for $validName not fully removed; startup sweep will retry")
-        }
-        com.redt.util.Format.invalidate(dir)
-        File(context.filesDir, "installed/$validName").delete()
-        val distro = DistroRegistry.allDistros.firstOrNull { it.name == validName }
-        val cached = if (distro != null) cachedTarballFile(distro)
-        else File(tarballDir(), "$validName.tar.xz")
-        cached.delete()
-        File(tarballDir(), cached.name + ".part").delete()
-        notifyDocumentRootsChanged()
-    }
-
     /**
      * Startup cleanup for disk usage not owned by any visible feature:
      * - rootfs dirs without an "installed" marker (husk of an interrupted
@@ -1128,99 +933,7 @@ class DistroInstaller(private val context: Context) {
         }
     }
 
-    fun backup(distroName: String, outDir: File): Boolean {
-        val rootfsDir = getRootfsDir(distroName)
-        val backupFile = File(outDir, "${distroName}_backup.tar.gz")
-        var proc: Process? = null
-        return try {
-            val pb = ProcessBuilder(
-                "tar", "-czf", backupFile.absolutePath,
-                "-C", rootfsDir.parentFile?.absolutePath ?: "", rootfsDir.name
-            )
-            pb.redirectErrorStream(true)
-            proc = pb.start()
-            // Drain merged stdout/stderr on a separate thread to avoid the pipe
-            // buffer filling and blocking the process while we wait.
-            val drain = Thread { try { proc.inputStream.use { it.readBytes() } } catch (_: Exception) {} }
-            drain.isDaemon = true
-            drain.start()
-            val finished = proc.waitFor(BACKUP_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)
-            if (!finished) {
-                killProcess(proc!!)
-                Log.w("DistroInstaller", "System tar timed out, falling back to Java backup")
-                backupWithJava(rootfsDir, backupFile)
-            } else {
-                drain.join(2000)
-                if (proc.exitValue() == 0 && backupFile.exists() && backupFile.length() > 0) {
-                    true
-                } else {
-                    Log.w("DistroInstaller", "System tar failed, falling back to Java backup")
-                    backupWithJava(rootfsDir, backupFile)
-                }
-            }
-        } catch (_: Exception) {
-            try {
-                backupWithJava(rootfsDir, backupFile)
-            } catch (e: Exception) {
-                Log.e("DistroInstaller", "Java backup fallback failed", e)
-                false
-            }
-        } finally {
-            proc?.destroy()
-        }
-    }
-
-    private fun backupWithJava(rootfsDir: File, backupFile: File): Boolean {
-        if (backupFile.exists()) backupFile.delete()
-        var ok = false
-        FileOutputStream(backupFile).use { fos ->
-            GzipCompressorOutputStream(fos).use { gz ->
-                TarArchiveOutputStream(gz).use { tar ->
-                    tar.setLongFileMode(TarArchiveOutputStream.LONGFILE_POSIX)
-                    addDirToTar(tar, rootfsDir, rootfsDir.name)
-                }
-            }
-            ok = true
-        }
-        return ok && backupFile.exists() && backupFile.length() > 0
-    }
-
-    private fun addDirToTar(tar: TarArchiveOutputStream, dir: File, entryName: String) {
-        val isLink = try {
-            OsConstants.S_ISLNK(Os.lstat(dir.absolutePath).st_mode)
-        } catch (_: Exception) {
-            false
-        }
-        if (isLink) {
-            val entry = TarArchiveEntry(entryName, LF_SYMLINK_FLAG)
-            try {
-                val target = try { Os.readlink(dir.absolutePath) } catch (_: Exception) { "" }
-                if (target.isNotEmpty()) {
-                    entry.setLinkName(target)
-                }
-                tar.putArchiveEntry(entry)
-                tar.closeArchiveEntry()
-            } catch (_: Exception) {}
-            return
-        }
-        if (dir.isFile) {
-            val entry = try { TarArchiveEntry(dir) } catch (_: Exception) { TarArchiveEntry(entryName) }
-            entry.name = entryName
-            tar.putArchiveEntry(entry)
-            FileInputStream(dir).use { it.copyTo(tar) }
-            tar.closeArchiveEntry()
-            return
-        }
-        val dirEntry = TarArchiveEntry(dir, entryName)
-        tar.putArchiveEntry(dirEntry)
-        tar.closeArchiveEntry()
-        dir.listFiles()?.sortedBy { it.name }?.forEach { child ->
-            addDirToTar(tar, child, "$entryName/${child.name}")
-        }
-    }
-
     private companion object {
-        const val BACKUP_TIMEOUT_SECONDS = 600L
         const val NATIVE_XZ_TIMEOUT_SECONDS = 300L
         const val NATIVE_XZ_EXIT_TIMEOUT_SECONDS = 60L
         const val PROGRESS_EMIT_INTERVAL_MS = 100L
@@ -1231,14 +944,6 @@ class DistroInstaller(private val context: Context) {
          * status code is spelled out here.
          */
         const val HTTP_RANGE_NOT_SATISFIABLE = 416
-
-        /**
-         * Tar type flag for symbolic links ('2'). TarConstants.LF_SYMLINK is
-         * package-private, so the literal is used directly. setLinkName()
-         * alone does NOT set this flag; without it symlinks would be written
-         * as regular (size 0) files and restore as empty files.
-         */
-        val LF_SYMLINK_FLAG: Byte = 2
     }
 
     private fun notifyDocumentRootsChanged() {

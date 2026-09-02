@@ -50,7 +50,8 @@ class RedTWidgetProvider : AppWidgetProvider() {
             views.setTextViewText(R.id.widget_distro_name, "No distros installed")
             views.setTextViewText(R.id.widget_distro_status, "Open RedT to install")
             views.setTextViewText(R.id.widget_session_count, "")
-            val openIntent = Intent(context, MainActivity::class.java).apply {
+            val openIntent = Intent(context, TerminalActivity::class.java).apply {
+                putExtra(TerminalActivity.EXTRA_DISTRO, "alpine")
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
             views.setOnClickPendingIntent(R.id.widget_root, PendingIntent.getActivity(

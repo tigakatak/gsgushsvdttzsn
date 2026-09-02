@@ -2,8 +2,6 @@ package com.redt.ui
 
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
-import android.widget.Toast
-import com.redt.distro.DistroInstaller
 import com.redt.session.terminalSessionStore
 
 class QuickSettingsTile : TileService() {
@@ -22,15 +20,7 @@ class QuickSettingsTile : TileService() {
 
     override fun onClick() {
         if (!isLocked) {
-            val prefs = prefs()
-            val last = prefs.getString(Prefs.KEY_LAST_DISTRO, null)
-            val distros = DistroInstaller(this).getInstalledDistros()
-            val distro = distros.firstOrNull { it == last } ?: distros.firstOrNull()
-            if (distro != null) {
-                TerminalActivity.launch(this, distro)
-            } else {
-                Toast.makeText(this, "Install a distro first", Toast.LENGTH_SHORT).show()
-            }
+            TerminalActivity.launch(this, "alpine")
         }
     }
 

@@ -8,7 +8,6 @@ object Prefs {
     const val NAME = "settings"
     const val KEY_FONT_SIZE = "font_size"
     const val KEY_SCROLLBACK = "scrollback"
-    const val KEY_TERMINAL_OPACITY = "terminal_opacity"
     const val KEY_AUTOHIDE_KEYS = "autohide_keys"
     const val KEY_WAKELOCK = "wakelock"
     const val KEY_LAST_DISTRO = "last_distro"
@@ -17,7 +16,6 @@ object Prefs {
     const val FONT_SIZE_DEFAULT = 20
     const val FONT_SIZE_MIN = 8
     const val FONT_SIZE_MAX = 40
-    const val OPACITY_DEFAULT = 10
     const val PERMISSION_ASK_THROTTLE_MS = 8000L
     const val KEY_REPEAT_INITIAL_DELAY = 400L
     const val KEY_REPEAT_DELAY = 80L

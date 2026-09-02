@@ -201,11 +201,10 @@ alias mv='mv -i'
 """)
             val startup = File(rootDir, ".startup")
             val startupScript = """has_bash() { command -v bash >/dev/null 2>&1; }
-has_ca() { command -v update-ca-certificates >/dev/null 2>&1 || command -v update-ca-trust >/dev/null 2>&1; }
-if [ ! -f /root/.init_done ] || ! has_bash || ! has_ca; then
+if [ ! -f /root/.init_done ] || ! has_bash; then
     echo '>>> First-time distro setup...'
-    if $update 2>/root/.setup_error.log && ${prereqCmd}$install $quiet bash ca-certificates 2>>/root/.setup_error.log; then
-        if has_bash && has_ca; then
+    if $update 2>/root/.setup_error.log && ${prereqCmd}$install $quiet bash 2>>/root/.setup_error.log; then
+        if has_bash; then
             touch /root/.init_done
             echo '>>> Setup complete.'
         else
@@ -215,7 +214,7 @@ if [ ! -f /root/.init_done ] || ! has_bash || ! has_ca; then
     else
         echo '>>> Setup was interrupted or failed - starting a repair shell.'
         echo '>>> Details: /root/.setup_error.log'
-        echo ">>> Run manually: $update && ${prereqCmd}$install $quiet bash ca-certificates"
+        echo ">>> Run manually: $update && ${prereqCmd}$install $quiet bash"
     fi
 fi
 if command -v bash >/dev/null 2>&1; then

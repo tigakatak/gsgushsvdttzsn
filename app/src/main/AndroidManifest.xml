@@ -29,9 +29,12 @@
         android:requestRawExternalStorageAccess="true">
 
         <activity
-            android:name=".ui.WelcomeActivity"
+            android:name=".ui.TerminalActivity"
             android:exported="true"
-            android:theme="@style/Theme.RedTApp">
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.RedTApp"
+            android:configChanges="orientation|screenSize|keyboard|keyboardHidden"
+            android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -39,22 +42,10 @@
         </activity>
 
         <activity
-            android:name=".ui.MainActivity"
-            android:exported="false"
-            android:theme="@style/Theme.RedTApp" />
-
-        <activity
-            android:name=".ui.TerminalActivity"
-            android:exported="false"
-            android:launchMode="singleTask"
-            android:theme="@style/Theme.RedTApp"
-            android:configChanges="orientation|screenSize|keyboard|keyboardHidden"
-            android:windowSoftInputMode="adjustResize" />
-
-        <activity
             android:name=".ui.SettingsActivity"
             android:exported="false"
             android:theme="@style/Theme.RedTApp" />
+
 
         <service
             android:name=".ui.QuickSettingsTile"

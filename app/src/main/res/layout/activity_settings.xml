@@ -57,59 +57,6 @@
                 android:layout_height="wrap_content"
                 android:orientation="vertical">
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Installed Distributions"
-                    android:textColor="?attr/terminalText"
-                    android:textSize="14sp"
-                    android:textStyle="bold"
-                    android:layout_marginBottom="12dp" />
-
-                <LinearLayout
-                    android:id="@+id/distro_list"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical" />
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="48dp"
-                    android:gravity="center"
-                    android:background="?attr/terminalBg"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:foreground="?attr/selectableItemBackground"
-                    android:onClick="onAddDistroClick"
-                    android:layout_marginTop="8dp">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="+ Add Distribution"
-                        android:textColor="?attr/colorPrimary"
-                        android:textSize="14sp" />
-
-                </LinearLayout>
-
-            </LinearLayout>
-
-        </com.google.android.material.card.MaterialCardView>
-
-        <com.google.android.material.card.MaterialCardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            app:cardBackgroundColor="?attr/extraKeysBg"
-            app:cardCornerRadius="16dp"
-            app:cardElevation="0dp"
-            android:layout_marginBottom="20dp"
-            app:contentPadding="16dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical">
-
 
                 <TextView
                     android:layout_width="wrap_content"
@@ -215,46 +162,6 @@
 
                 </LinearLayout>
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Background opacity"
-                    android:textColor="?attr/terminalText"
-                    android:textSize="14sp" />
-
-                <SeekBar
-                    android:id="@+id/opacity_slider"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:max="10"
-                    android:progress="10"
-                    android:layout_marginBottom="16dp" />
-
-                <TextView
-                    android:id="@+id/export_config_btn"
-                    android:layout_width="match_parent"
-                    android:layout_height="40dp"
-                    android:gravity="center"
-                    android:text="Export Config"
-                    android:textColor="?attr/colorPrimary"
-                    android:textSize="14sp"
-                    android:background="?attr/terminalBg"
-                    android:clickable="true"
-                    android:focusable="true" />
-
-                <TextView
-                    android:id="@+id/import_config_btn"
-                    android:layout_width="match_parent"
-                    android:layout_height="40dp"
-                    android:gravity="center"
-                    android:text="Import Config"
-                    android:textColor="?attr/colorPrimary"
-                    android:textSize="14sp"
-                    android:background="?attr/terminalBg"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:layout_marginTop="8dp" />
-
             </LinearLayout>
 
         </com.google.android.material.card.MaterialCardView>
@@ -329,34 +236,6 @@
                     android:textSize="14sp"
                     android:background="?attr/terminalBg"
                     android:foreground="?attr/selectableItemBackground"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:layout_marginTop="8dp" />
-
-                <TextView
-                    android:id="@+id/backup_btn"
-                    android:layout_width="match_parent"
-                    android:layout_height="40dp"
-                    android:gravity="center"
-                    android:text="Backup Distro"
-                    android:foreground="?attr/selectableItemBackground"
-                    android:textColor="?attr/colorPrimary"
-                    android:textSize="14sp"
-                    android:background="?attr/terminalBg"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:layout_marginTop="8dp" />
-
-                <TextView
-                    android:id="@+id/restore_btn"
-                    android:layout_width="match_parent"
-                    android:layout_height="40dp"
-                    android:gravity="center"
-                    android:text="Restore Distro"
-                    android:foreground="?attr/selectableItemBackground"
-                    android:textColor="?attr/colorPrimary"
-                    android:textSize="14sp"
-                    android:background="?attr/terminalBg"
                     android:clickable="true"
                     android:focusable="true"
                     android:layout_marginTop="8dp" />
