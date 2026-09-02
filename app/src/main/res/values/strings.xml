@@ -2,6 +2,5 @@
 <resources>
     <string name="app_name">RedT</string>
     <string name="notification_channel_terminal">Terminal Sessions</string>
-    <string name="new_session">New Session</string>
     <string name="proot_extraction_failed">Proot extraction failed — reinstall app</string>
 </resources>

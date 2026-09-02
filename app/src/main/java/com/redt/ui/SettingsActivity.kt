@@ -32,6 +32,8 @@ class SettingsActivity : AppCompatActivity() {
         lifecycleScope.launch {
             terminalSessionStore.exitSignal.collect { finishAffinity() }
         }
+        findViewById<android.widget.ImageButton>(R.id.settings_back_btn).setOnClickListener { finish() }
+
 
         val prefs = prefs()
 

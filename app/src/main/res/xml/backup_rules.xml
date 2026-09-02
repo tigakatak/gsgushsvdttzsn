@@ -1,17 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    Backup/restore is disabled entirely: no cloud backup and no
+    device-to-device transfer. domain="root" covers
+    file/database/sharedpref/external in one rule.
+-->
 <data-extraction-rules>
-    <!--
-        Cloud backup ke Google Drive dimatikan total (privasi + kuota):
-        tidak ada byte RedT yang ter-upload ke infra Google.
-        Device-to-device transfer saat pindah HP tetap aktif.
-        domain="root" mencakup file/database/sharedpref/external sekaligus.
-    -->
     <cloud-backup>
         <exclude domain="root" path="." />
     </cloud-backup>
     <device-transfer>
-        <include domain="sharedpref" path="settings.xml" />
-        <include domain="file" path="installed/" />
-        <include domain="file" path="rootfs/" />
+        <exclude domain="root" path="." />
     </device-transfer>
 </data-extraction-rules>
