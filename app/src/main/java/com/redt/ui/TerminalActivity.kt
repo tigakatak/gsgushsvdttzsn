@@ -821,9 +821,9 @@ class TerminalActivity : AppCompatActivity() {
     }
 
     private fun showInstallFailed(message: String) {
-        val text = installStatusText ?: return
-        text.text = "Install failed:\n$message"
-        text.setTextColor(0xFFFF6B6B.toInt())
+        val status = installStatusText ?: return
+        status.text = "Install failed:\n$message"
+        status.setTextColor(0xFFFF6B6B.toInt())
         installProgressBar?.visibility = android.view.View.GONE
         val overlay = installOverlay ?: return
         if (overlay.getChildAt(overlay.childCount - 1) !is Button) {
