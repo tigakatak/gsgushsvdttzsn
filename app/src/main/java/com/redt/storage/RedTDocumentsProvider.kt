@@ -16,6 +16,11 @@ import java.io.File
 import java.io.FileNotFoundException
 import java.io.IOException
 
+/**
+ * Exposes the Alpine rootfs as the app's single SAF root: picking "RedT"
+ * in the system file picker lands directly in the Alpine filesystem root
+ * (filesDir/rootfs/alpine), not in a distro-listing parent directory.
+ */
 class RedTDocumentsProvider : DocumentsProvider() {
 
     companion object {
@@ -50,17 +55,18 @@ class RedTDocumentsProvider : DocumentsProvider() {
     private val authority
         get() = "${appContext.packageName}.documents"
 
-    private val rootfsDir
-        get() = File(appContext.filesDir, "rootfs")
+    /**
+     * The SAF root is the Alpine rootfs itself. Never pre-created here:
+     * TerminalActivity decides "Alpine installed" by this directory's
+     * existence, and creating it early would break the install flow.
+     */
+    private val alpineRoot
+        get() = File(appContext.filesDir, "rootfs/alpine")
 
-    override fun onCreate(): Boolean {
-        rootfsDir.mkdirs()
-        return true
-    }
+    override fun onCreate(): Boolean = true
 
     override fun queryRoots(projection: Array<out String>?): Cursor {
         val cursor = MatrixCursor(projection ?: ROOT_PROJECTION)
-        val installedCount = installedDistros().size
         cursor.newRow().apply {
             add(DocumentsContract.Root.COLUMN_ROOT_ID, ROOT_ID)
             add(DocumentsContract.Root.COLUMN_MIME_TYPES, "*/*")
@@ -70,10 +76,7 @@ class RedTDocumentsProvider : DocumentsProvider() {
             )
             add(DocumentsContract.Root.COLUMN_ICON, R.mipmap.ic_launcher)
             add(DocumentsContract.Root.COLUMN_TITLE, "RedT")
-            add(
-                DocumentsContract.Root.COLUMN_SUMMARY,
-                "$installedCount installed distribution${if (installedCount == 1) "" else "s"}",
-            )
+            add(DocumentsContract.Root.COLUMN_SUMMARY, "Alpine Linux rootfs")
             add(DocumentsContract.Root.COLUMN_DOCUMENT_ID, ROOT_DOCUMENT_ID)
             add(DocumentsContract.Root.COLUMN_AVAILABLE_BYTES, appContext.filesDir.usableSpace)
         }
@@ -94,13 +97,8 @@ class RedTDocumentsProvider : DocumentsProvider() {
         sortOrder: String?,
     ): Cursor {
         val cursor = MatrixCursor(projection ?: DOCUMENT_PROJECTION)
-        if (parentDocumentId == ROOT_DOCUMENT_ID) {
-            installedDistros().forEach { name ->
-                val distroDir = File(rootfsDir, name)
-                if (distroDir.isDirectory && isSafeTarget(distroDir)) {
-                    includeDocument(cursor, documentIdFor(distroDir), distroDir)
-                }
-            }
+        // Alpine not installed yet: show an empty root instead of failing.
+        if (parentDocumentId == ROOT_DOCUMENT_ID && !existsWithoutFollowingLinks(alpineRoot)) {
             return cursor
         }
 
@@ -146,9 +144,6 @@ class RedTDocumentsProvider : DocumentsProvider() {
         mimeType: String,
         displayName: String,
     ): String {
-        if (parentDocumentId == ROOT_DOCUMENT_ID) {
-            throw FileNotFoundException("Files cannot be created above installed distributions")
-        }
         validateDisplayName(displayName)
         val parent = resolveDocument(parentDocumentId)
         if (!isSafeTarget(parent) || !parent.isDirectory) {
@@ -202,7 +197,6 @@ class RedTDocumentsProvider : DocumentsProvider() {
         val isLink = !isRoot && isSymbolicLink(file)
         val safeTarget = isRoot || isSafeTarget(file)
         val isDirectory = safeTarget && file.isDirectory
-        val protectedDistroRoot = isDistroRoot(documentId)
 
         var flags = 0
         if (isDirectory && !isRoot) {
@@ -211,7 +205,7 @@ class RedTDocumentsProvider : DocumentsProvider() {
         if (!isDirectory && !isLink && safeTarget && file.canWrite()) {
             flags = flags or DocumentsContract.Document.FLAG_SUPPORTS_WRITE
         }
-        if (!isRoot && !protectedDistroRoot && file.parentFile?.canWrite() == true) {
+        if (!isRoot && file.parentFile?.canWrite() == true) {
             flags = flags or DocumentsContract.Document.FLAG_SUPPORTS_DELETE
             flags = flags or DocumentsContract.Document.FLAG_SUPPORTS_RENAME
         }
@@ -224,7 +218,7 @@ class RedTDocumentsProvider : DocumentsProvider() {
             )
             add(
                 DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-                if (isRoot) "RedT" else file.name,
+                if (isRoot) "Alpine" else file.name,
             )
             add(
                 DocumentsContract.Document.COLUMN_LAST_MODIFIED,
@@ -239,7 +233,7 @@ class RedTDocumentsProvider : DocumentsProvider() {
     }
 
     private fun resolveDocument(documentId: String): File {
-        if (documentId == ROOT_DOCUMENT_ID) return rootfsDir
+        if (documentId == ROOT_DOCUMENT_ID) return alpineRoot
         if (!documentId.startsWith(DOCUMENT_PREFIX)) throw FileNotFoundException(documentId)
 
         val relativePath = documentId.removePrefix(DOCUMENT_PREFIX)
@@ -247,17 +241,16 @@ class RedTDocumentsProvider : DocumentsProvider() {
         if (parts.isEmpty() || parts.any { it.isEmpty() || it == "." || it == ".." }) {
             throw FileNotFoundException(documentId)
         }
-        if (parts.first() !in installedDistros()) throw FileNotFoundException(documentId)
 
-        val file = parts.fold(rootfsDir) { parent, name -> File(parent, name) }
+        val file = parts.fold(alpineRoot) { parent, name -> File(parent, name) }
         val parent = file.parentFile ?: throw FileNotFoundException(documentId)
-        if (!isInsideRootfs(parent.canonicalFile)) throw FileNotFoundException(documentId)
+        if (!isInsideAlpine(parent.canonicalFile)) throw FileNotFoundException(documentId)
         return file
     }
 
     private fun resolveMutableDocument(documentId: String): File {
-        if (documentId == ROOT_DOCUMENT_ID || isDistroRoot(documentId)) {
-            throw FileNotFoundException("Installed distribution roots are managed by RedT")
+        if (documentId == ROOT_DOCUMENT_ID) {
+            throw FileNotFoundException("The Alpine rootfs root is managed by RedT")
         }
         val file = resolveDocument(documentId)
         if (!existsWithoutFollowingLinks(file)) throw FileNotFoundException(documentId)
@@ -265,38 +258,21 @@ class RedTDocumentsProvider : DocumentsProvider() {
     }
 
     private fun documentIdFor(file: File): String {
-        if (file.absoluteFile.normalize() == rootfsDir.absoluteFile.normalize()) {
+        if (file.absoluteFile.normalize() == alpineRoot.absoluteFile.normalize()) {
             return ROOT_DOCUMENT_ID
         }
-        val relative = file.absoluteFile.normalize().relativeTo(rootfsDir.absoluteFile.normalize()).path
+        val relative = file.absoluteFile.normalize().relativeTo(alpineRoot.absoluteFile.normalize()).path
         return "$DOCUMENT_PREFIX$relative"
     }
 
-    private fun installedDistros(): List<String> {
-        val installedDir = File(appContext.filesDir, "installed")
-        return installedDir.listFiles()
-            ?.asSequence()
-            ?.filter { it.isFile && it.name.isNotEmpty() && '/' !in it.name }
-            ?.map { it.name }
-            ?.filter { File(rootfsDir, it).isDirectory }
-            ?.sorted()
-            ?.toList()
-            ?: emptyList()
-    }
-
-    private fun isDistroRoot(documentId: String): Boolean {
-        if (!documentId.startsWith(DOCUMENT_PREFIX)) return false
-        return '/' !in documentId.removePrefix(DOCUMENT_PREFIX)
-    }
-
-    private fun isInsideRootfs(file: File): Boolean {
-        val rootPath = rootfsDir.canonicalFile.path
+    private fun isInsideAlpine(file: File): Boolean {
+        val rootPath = alpineRoot.canonicalFile.path
         val filePath = file.path
         return filePath == rootPath || filePath.startsWith(rootPath + File.separator)
     }
 
     private fun isSafeTarget(file: File): Boolean = try {
-        isInsideRootfs(file.canonicalFile)
+        isInsideAlpine(file.canonicalFile)
     } catch (_: IOException) {
         false
     }
