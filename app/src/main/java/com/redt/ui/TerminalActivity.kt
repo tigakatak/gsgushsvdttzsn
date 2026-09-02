@@ -364,7 +364,7 @@ class TerminalActivity : AppCompatActivity() {
             "BACKSPACE" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DEL, currentKeyMod()) },
             "\u2014" to { session?.write("-") },
         )
-        val action = actions.firstOrNull { it.first == label }?.second
+        val action: () -> Unit = actions.firstOrNull { it.first == label }?.second
             ?: { session?.write(label) }
         if (label == "CTRL" || label == "ALT" || label == "SHIFT") return action
         return {
