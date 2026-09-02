@@ -3,3 +3,4 @@
 -dontwarn com.github.luben.zstd.**
 -dontwarn org.brotli.dec.**
 -dontwarn org.objectweb.asm.**
+-dontwarn org.tukaani.xz.**

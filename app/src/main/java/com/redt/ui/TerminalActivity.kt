@@ -343,32 +343,29 @@ class TerminalActivity : AppCompatActivity() {
         val actions: List<Pair<String, () -> Unit>> = listOf(
             "\u2630" to { toggleSessionsPanel() },
             "MENU" to { toggleSessionsPanel() },
-            "ESC" to { session?.writeCodePoint(false, 27); Unit },
-            "TAB" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_TAB, currentKeyMod()); Unit },
+            "ESC" to { session?.writeCodePoint(false, 27) },
+            "TAB" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_TAB, currentKeyMod()) },
             "ALT" to { toggleAlt() },
             "SHIFT" to { toggleShift() },
             "CTRL" to { toggleCtrl() },
-            "\u25B2" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_UP, currentKeyMod()); Unit },
-            "UP" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_UP, currentKeyMod()); Unit },
-            "\u25BC" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_DOWN, currentKeyMod()); Unit },
-            "DOWN" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_DOWN, currentKeyMod()); Unit },
-            "\u25C0" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_LEFT, currentKeyMod()); Unit },
-            "LEFT" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_LEFT, currentKeyMod()); Unit },
-            "\u25B6" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_RIGHT, currentKeyMod()); Unit },
-            "RIGHT" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_RIGHT, currentKeyMod()); Unit },
-            "HOME" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_MOVE_HOME, currentKeyMod()); Unit },
-            "END" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_MOVE_END, currentKeyMod()); Unit },
-            "INS" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_INSERT, currentKeyMod()); Unit },
-            "DEL" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_FORWARD_DEL, currentKeyMod()); Unit },
-            "\u232B" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DEL, currentKeyMod()); Unit },
-            "BACKSPACE" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DEL, currentKeyMod()); Unit },
-            "\u2014" to { session?.write("-"); Unit },
+            "\u25B2" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_UP, currentKeyMod()) },
+            "UP" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_UP, currentKeyMod()) },
+            "\u25BC" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_DOWN, currentKeyMod()) },
+            "DOWN" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_DOWN, currentKeyMod()) },
+            "\u25C0" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_LEFT, currentKeyMod()) },
+            "LEFT" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_LEFT, currentKeyMod()) },
+            "\u25B6" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_RIGHT, currentKeyMod()) },
+            "RIGHT" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_RIGHT, currentKeyMod()) },
+            "HOME" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_MOVE_HOME, currentKeyMod()) },
+            "END" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_MOVE_END, currentKeyMod()) },
+            "INS" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_INSERT, currentKeyMod()) },
+            "DEL" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_FORWARD_DEL, currentKeyMod()) },
+            "\u232B" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DEL, currentKeyMod()) },
+            "BACKSPACE" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DEL, currentKeyMod()) },
+            "\u2014" to { session?.write("-") },
         )
         val action = actions.firstOrNull { it.first == label }?.second
-            ?: {
-                session?.write(label)
-                Unit
-            }
+            ?: { session?.write(label) }
         if (label == "CTRL" || label == "ALT" || label == "SHIFT") return action
         return {
             if (session != null || label == "\u2630" || label == "MENU") {
