@@ -37,8 +37,6 @@ import com.redt.util.Clipboard
 import com.termux.terminal.TerminalSession
 import com.termux.terminal.TextStyle
 import com.termux.view.TerminalView
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -60,6 +58,7 @@ class TerminalActivity : AppCompatActivity() {
     private var row2Container: LinearLayout? = null
     private var inputField: EditText? = null
 
+    private val modifiers = ModifierState()
     private var terminalBackend: TerminalBackend? = null
     private val installer by lazy { DistroInstaller(applicationContext) }
 
@@ -71,11 +70,8 @@ class TerminalActivity : AppCompatActivity() {
         private const val MENU_EXPORT = 14
         private const val MENU_SETTINGS = 15
 
-        private val MODIFIER_KEY_CODES = setOf(
-            KeyEvent.KEYCODE_CTRL_LEFT, KeyEvent.KEYCODE_CTRL_RIGHT,
-            KeyEvent.KEYCODE_ALT_LEFT, KeyEvent.KEYCODE_ALT_RIGHT,
-            KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT
-        )
+        private val MODIFIER_KEY_CODES: Set<Int> =
+            TerminalModifier.entries.flatMapTo(mutableSetOf()) { it.keyCodes }
 
         fun launchIntent(context: Context): Intent =
             Intent(context, TerminalActivity::class.java).apply {
@@ -88,8 +84,8 @@ class TerminalActivity : AppCompatActivity() {
     }
 
     private val sessionStore by lazy { terminalSessionStore }
-    private val sessions: List<TerminalSession> get() = sessionStore.sessions.value
-    private val currentIndex: Int get() = sessionStore.currentIndex.value
+    private val sessions: List<TerminalSession> get() = sessionStore.sessions
+    private val currentIndex: Int get() = sessionStore.currentIndex
 
 
     private val requestNotificationPermission =
@@ -206,7 +202,7 @@ class TerminalActivity : AppCompatActivity() {
     }
 
     private fun ensureTerminalBackend(): TerminalBackend =
-        terminalBackend ?: TerminalBackend(terminalView, this).also {
+        terminalBackend ?: TerminalBackend(terminalView, this, modifiers).also {
             terminalBackend = it
             terminalView.setTerminalViewClient(it)
             wireBackend(it)
@@ -218,9 +214,8 @@ class TerminalActivity : AppCompatActivity() {
     private fun observeSessions() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                combine(sessionStore.sessions, sessionStore.currentIndex) { active, index ->
-                    active to index
-                }.collect { (active, index) ->
+                sessionStore.state.collect { st ->
+                    val active = st.sessions
                     val backend = ensureTerminalBackend()
                     // mRenderer is only set once the view has been laid out,
                     // so a null renderer means "first emission, not yet
@@ -243,10 +238,12 @@ class TerminalActivity : AppCompatActivity() {
                     }
                     sawActiveSession = true
                     clearErrorOverlay()
-                    val safeIndex = index.coerceIn(active.indices)
-                    if (index != safeIndex) sessionStore.switchToSession(active[safeIndex])
-                    if (terminalView.mTermSession !== active[safeIndex]) {
-                        showSession(active[safeIndex])
+                    // The store updates the list and index atomically, but a
+                    // fresh session can briefly appear before its index is
+                    // switched to, so clamp defensively.
+                    val current = active[st.currentIndex.coerceIn(active.indices)]
+                    if (terminalView.mTermSession !== current) {
+                        showSession(current)
                     }
                     updateDrawer()
                     RedTWidgetProvider.updateAll(this@TerminalActivity)
@@ -255,12 +252,8 @@ class TerminalActivity : AppCompatActivity() {
         }
     }
 
-    private fun isRepeatableKey(label: String): Boolean {
-        return label in listOf(
-            "\u25B2", "UP", "\u25BC", "DOWN", "\u25C0", "LEFT", "\u25B6", "RIGHT",
-            "HOME", "END", "DEL", "INS", "\u232B", "BACKSPACE"
-        )
-    }
+    private fun isRepeatableKey(label: String): Boolean =
+        specByLabel[label]?.repeatable == true
 
     private fun updateDistroSizeLabel() {
         val rootfsDir = installer.getRootfsDir(distroName)
@@ -342,56 +335,63 @@ class TerminalActivity : AppCompatActivity() {
             split(prefs.getString(Prefs.KEY_EXTRA_KEYS_ROW2, Prefs.EXTRA_KEYS_ROW2_DEFAULT)!!)
     }
 
-    /** Static label -> action map; built once per activity, not per key press. */
-    private val keyActions: Map<String, () -> Unit> = mapOf(
-        "\u2630" to { toggleSessionsPanel() },
-        "MENU" to { toggleSessionsPanel() },
-        "ESC" to { session?.writeCodePoint(false, 27) },
-        "TAB" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_TAB, currentKeyMod()) },
-        "ALT" to { toggleModifier("ALT") },
-        "SHIFT" to { toggleModifier("SHIFT") },
-        "CTRL" to { toggleModifier("CTRL") },
-        "\u25B2" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_UP, currentKeyMod()) },
-        "UP" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_UP, currentKeyMod()) },
-        "\u25BC" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_DOWN, currentKeyMod()) },
-        "DOWN" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_DOWN, currentKeyMod()) },
-        "\u25C0" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_LEFT, currentKeyMod()) },
-        "LEFT" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_LEFT, currentKeyMod()) },
-        "\u25B6" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_RIGHT, currentKeyMod()) },
-        "RIGHT" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DPAD_RIGHT, currentKeyMod()) },
-        "HOME" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_MOVE_HOME, currentKeyMod()) },
-        "END" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_MOVE_END, currentKeyMod()) },
-        "INS" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_INSERT, currentKeyMod()) },
-        "DEL" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_FORWARD_DEL, currentKeyMod()) },
-        "\u232B" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DEL, currentKeyMod()) },
-        "BACKSPACE" to { terminalView.handleKeyCode(KeyEvent.KEYCODE_DEL, currentKeyMod()) },
-        // The em-dash key intentionally writes a literal "-".
-        "\u2014" to { session?.write("-") },
+    /**
+     * Single table of every known extra key: the labels that select it
+     * (glyph or word), whether holding it auto-repeats, whether it needs a
+     * live session, and what it does. Unknown labels fall back to typing
+     * their text into the session.
+     */
+    private class ExtraKeySpec(
+        val labels: Set<String>,
+        val repeatable: Boolean = false,
+        val requiresSession: Boolean = true,
+        val modifier: TerminalModifier? = null,
+        val action: TerminalActivity.() -> Unit,
     )
 
-    private fun keyAction(label: String): () -> Unit {
-        val action: () -> Unit = keyActions[label] ?: { session?.write(label) }
-        if (label in modifierActive) return action
-        return {
-            if (session != null || label == "\u2630" || label == "MENU") {
-                action()
-                consumeModifiers()
-            }
-        }
+    private val specByLabel: Map<String, ExtraKeySpec> = listOf(
+        ExtraKeySpec(setOf("\u2630", "MENU"), requiresSession = false) { toggleSessionsPanel() },
+        ExtraKeySpec(setOf("ESC")) { session?.writeCodePoint(false, 27) },
+        ExtraKeySpec(setOf("TAB")) { key(KeyEvent.KEYCODE_TAB) },
+        ExtraKeySpec(setOf("CTRL"), requiresSession = false, modifier = TerminalModifier.CTRL) {
+            toggleModifier(TerminalModifier.CTRL)
+        },
+        ExtraKeySpec(setOf("ALT"), requiresSession = false, modifier = TerminalModifier.ALT) {
+            toggleModifier(TerminalModifier.ALT)
+        },
+        ExtraKeySpec(setOf("SHIFT"), requiresSession = false, modifier = TerminalModifier.SHIFT) {
+            toggleModifier(TerminalModifier.SHIFT)
+        },
+        ExtraKeySpec(setOf("\u25B2", "UP"), repeatable = true) { key(KeyEvent.KEYCODE_DPAD_UP) },
+        ExtraKeySpec(setOf("\u25BC", "DOWN"), repeatable = true) { key(KeyEvent.KEYCODE_DPAD_DOWN) },
+        ExtraKeySpec(setOf("\u25C0", "LEFT"), repeatable = true) { key(KeyEvent.KEYCODE_DPAD_LEFT) },
+        ExtraKeySpec(setOf("\u25B6", "RIGHT"), repeatable = true) { key(KeyEvent.KEYCODE_DPAD_RIGHT) },
+        ExtraKeySpec(setOf("HOME"), repeatable = true) { key(KeyEvent.KEYCODE_MOVE_HOME) },
+        ExtraKeySpec(setOf("END"), repeatable = true) { key(KeyEvent.KEYCODE_MOVE_END) },
+        ExtraKeySpec(setOf("INS"), repeatable = true) { key(KeyEvent.KEYCODE_INSERT) },
+        ExtraKeySpec(setOf("DEL"), repeatable = true) { key(KeyEvent.KEYCODE_FORWARD_DEL) },
+        ExtraKeySpec(setOf("\u232B", "BACKSPACE"), repeatable = true) { key(KeyEvent.KEYCODE_DEL) },
+        // The em-dash key intentionally writes a literal "-".
+        ExtraKeySpec(setOf("\u2014")) { session?.write("-") },
+    ).flatMap { spec -> spec.labels.map { it to spec } }.toMap()
+
+    /** Sends [keyCode] with the currently active sticky modifiers. */
+    private fun key(keyCode: Int) {
+        terminalView.handleKeyCode(keyCode, modifiers.keyMod())
     }
 
-    private fun currentKeyMod(): Int {
-        var mod = 0
-        if (modifierActive["CTRL"] == true) mod = mod or com.termux.terminal.KeyHandler.KEYMOD_CTRL
-        if (modifierActive["ALT"] == true) mod = mod or com.termux.terminal.KeyHandler.KEYMOD_ALT
-        if (modifierActive["SHIFT"] == true) mod = mod or com.termux.terminal.KeyHandler.KEYMOD_SHIFT
-        return mod
+    /** Runs the extra key selected by [label]; see [ExtraKeySpec]. */
+    private fun performKeyAction(label: String) {
+        val spec = specByLabel[label]
+        if (spec?.requiresSession != false && session == null) return
+        if (spec != null) spec.action() else session?.write(label)
+        if (spec?.modifier == null) consumeModifiers()
     }
 
     private fun setupExtraKeysRow(container: LinearLayout?, labels: List<String>) {
         container ?: return
         for (label in labels) {
-            container.addView(createKeyButton(label, keyAction(label)))
+            container.addView(createKeyButton(label) { performKeyAction(label) })
         }
     }
 
@@ -413,33 +413,16 @@ class TerminalActivity : AppCompatActivity() {
         updateModifierButtons()
     }
 
-    /** Modifier state keyed by button label, mirroring the backend flags. */
-    private val modifierActive = mutableMapOf("CTRL" to false, "ALT" to false, "SHIFT" to false)
     private var lastImeVisible = false
 
-    private fun toggleModifier(label: String) {
-        modifierActive[label] = !(modifierActive[label] ?: false)
-        applyModifierState(label)
+    private fun toggleModifier(modifier: TerminalModifier) {
+        modifiers.toggle(modifier)
         updateModifierButtons()
     }
 
-    private fun applyModifierState(label: String) {
-        val active = modifierActive[label] == true
-        when (label) {
-            "CTRL" -> terminalBackend?.setCtrl(active)
-            "ALT" -> terminalBackend?.setAlt(active)
-            "SHIFT" -> terminalBackend?.setShift(active)
-        }
-    }
-
-    private fun anyModifierActive(): Boolean = modifierActive.values.any { it }
-
     private fun consumeModifiers() {
-        if (modifierActive.values.none { it }) return
-        for (label in modifierActive.keys.toList()) {
-            modifierActive[label] = false
-            applyModifierState(label)
-        }
+        if (!modifiers.any()) return
+        modifiers.clear()
         updateModifierButtons()
     }
 
@@ -448,10 +431,10 @@ class TerminalActivity : AppCompatActivity() {
             val r = row ?: continue
             for (i in 0 until r.childCount) {
                 val btn = r.getChildAt(i) as? Button ?: continue
-                val label = btn.text.toString()
-                if (label in modifierActive) {
-                    btn.setBackgroundColor(if (modifierActive[label] == true) modifierHighlightColor() else 0)
-                }
+                val modifier = TerminalModifier.forLabel(btn.text.toString()) ?: continue
+                btn.setBackgroundColor(
+                    if (modifiers.isActive(modifier)) modifierHighlightColor() else 0
+                )
             }
         }
     }
@@ -846,9 +829,9 @@ class TerminalActivity : AppCompatActivity() {
         syncExtraKeysRows()
         if (!com.redt.util.StoragePermission.isAccessible()) {
             val prefs = prefs()
-            val lastAsk = prefs.getLong("storage_ask_time", 0L)
+            val lastAsk = prefs.getLong(Prefs.KEY_STORAGE_ASK_TIME, 0L)
             if (System.currentTimeMillis() - lastAsk > Prefs.PERMISSION_ASK_THROTTLE_MS) {
-                prefs.edit().putLong("storage_ask_time", System.currentTimeMillis()).apply()
+                prefs.edit().putLong(Prefs.KEY_STORAGE_ASK_TIME, System.currentTimeMillis()).apply()
                 com.redt.util.StoragePermission.requestAccess(this)
             }
         }
@@ -870,14 +853,6 @@ class TerminalActivity : AppCompatActivity() {
         com.redt.util.Format.invalidate(installer.getRootfsDir(distroName))
     }
 
-    private fun sendServiceAction(action: String) {
-        try {
-            startService(Intent(this, TerminalService::class.java).apply { this.action = action })
-        } catch (e: Exception) {
-            android.util.Log.d("TerminalActivity", "Service action $action failed: ${e.message}")
-        }
-    }
-
     override fun onDestroy() {
         RedTWidgetProvider.updateAll(this)
         if (installJob?.isActive == true) {
@@ -895,16 +870,15 @@ class TerminalActivity : AppCompatActivity() {
     }
 
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
-        // Top-edge gesture band: taps this close to the screen's top may
-        // need to re-evaluate extra-keys visibility (auto-hide mode).
-        val topBandViewLocal = dp(40)
-        val topBandScreen = dp(120)
+        // Heuristic top-edge band: taps this close to the window's top (and
+        // the physical screen's) can follow a system-UI gesture that changed
+        // IME state, so in auto-hide mode re-evaluate extra-keys visibility
+        // before the tap lands.
         if (ev.action == android.view.MotionEvent.ACTION_DOWN &&
-            ev.y < topBandViewLocal && ev.rawY < topBandScreen
+            ev.y < dp(40) && ev.rawY < dp(120) &&
+            prefs().getBoolean(Prefs.KEY_AUTOHIDE_KEYS, false)
         ) {
-            if (prefs().getBoolean(Prefs.KEY_AUTOHIDE_KEYS, false)) {
-                updateExtraKeysVisibility()
-            }
+            updateExtraKeysVisibility()
         }
         return super.dispatchTouchEvent(ev)
     }
@@ -912,7 +886,7 @@ class TerminalActivity : AppCompatActivity() {
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (currentFocus is android.widget.EditText) return super.dispatchKeyEvent(event)
         if (currentIndex !in sessions.indices) return super.dispatchKeyEvent(event)
-        val hadModifier = anyModifierActive()
+        val hadModifier = modifiers.any()
         @Suppress("DEPRECATION")
         val handled = when (event.action) {
             KeyEvent.ACTION_DOWN -> terminalView.onKeyDown(event.keyCode, event) || super.dispatchKeyEvent(event)
@@ -940,24 +914,20 @@ class TerminalActivity : AppCompatActivity() {
         menu.add(0, MENU_SETTINGS, 0, "Settings")
     }
 
-    private fun resolveTerminalColors(): Triple<Int, Int, Int> = Triple(
-        terminalBgColor(),
-        extraKeysBgColor(),
-        terminalTextColor()
-    )
-
     private fun applyEmulatorColors(view: TerminalView) {
         val emulator = view.mEmulator ?: return
-        val (bg, _, textColor) = resolveTerminalColors()
+        val textColor = terminalTextColor()
         val palette = emulator.mColors.mCurrentColors
         palette[TextStyle.COLOR_INDEX_FOREGROUND] = textColor
-        palette[TextStyle.COLOR_INDEX_BACKGROUND] = bg
+        palette[TextStyle.COLOR_INDEX_BACKGROUND] = terminalBgColor()
         palette[TextStyle.COLOR_INDEX_CURSOR] = textColor
         view.invalidate()
     }
 
     private fun applyTerminalColors() {
-        val (bg, extraBg, textColor) = resolveTerminalColors()
+        val bg = terminalBgColor()
+        val extraBg = extraKeysBgColor()
+        val textColor = terminalTextColor()
         terminalView.setBackgroundColor(bg)
         drawerLayout.setBackgroundColor(bg)
         extraKeysWrapper.setBackgroundColor(extraBg)

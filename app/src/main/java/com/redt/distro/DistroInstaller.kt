@@ -25,6 +25,9 @@ class DistroInstaller(private val context: Context) {
 
     data class Progress(val percent: Int, val speed: String)
 
+    /** One repair outcome; [warning] lines are surfaced in the session log. */
+    data class RepairLine(val message: String, val warning: Boolean = false)
+
     private val generation = AtomicInteger(0)
 
     @Volatile
@@ -104,16 +107,8 @@ class DistroInstaller(private val context: Context) {
     private fun tarballDir(): File =
         File(context.filesDir, "tarballs").apply { mkdirs() }
 
-    private fun cachedTarballName(distro: Distro): String {
-        val url = distro.tarballUrl
-        return when {
-            url.endsWith(".tar.gz", true) -> "${distro.name}.tar.gz"
-            else -> "${distro.name}.tar"
-        }
-    }
-
     private fun cachedTarballFile(distro: Distro): File =
-        File(tarballDir(), cachedTarballName(distro))
+        File(tarballDir(), distro.tarballUrl.substringAfterLast('/'))
 
     class CancelledException : Exception("Installation cancelled")
 
@@ -140,22 +135,17 @@ class DistroInstaller(private val context: Context) {
         // Runs even when this coroutine is being cancelled: a cancelled
         // install must not leave a half-extracted rootfs behind. Plain
         // withContext(Dispatchers.IO) would hit the cancellation fast-path
-        // and skip the delete entirely.
+        // and skip the delete entirely. Each step is best-effort so one
+        // failure cannot block the remaining cleanup.
         withContext(NonCancellable) {
             if (runCatching { validateDistroName(distro.name) }.isFailure) return@withContext
-            try {
-                val dir = getRootfsDir(distro.name)
-                deleteRootfsSafe(dir)
-                com.redt.util.Format.invalidate(dir)
-            } catch (_: Exception) {}
-            try {
-                cachedTarballFile(distro).delete()
-                // The .part file is intentionally kept: a fresh attempt
-                // resumes from it instead of restarting the download.
-            } catch (_: Exception) {}
-            try {
-                File(context.filesDir, "installed/${distro.name}").delete()
-            } catch (_: Exception) {}
+            val dir = getRootfsDir(distro.name)
+            runCatching { deleteRootfsSafe(dir) }
+            runCatching { com.redt.util.Format.invalidate(dir) }
+            // The .part file is intentionally kept: a fresh attempt
+            // resumes from it instead of restarting the download.
+            runCatching { cachedTarballFile(distro).delete() }
+            runCatching { installedMarker(distro.name).delete() }
             notifyDocumentRootsChanged()
         }
     }
@@ -553,67 +543,65 @@ class DistroInstaller(private val context: Context) {
         }
     }
 
-    fun repairRootfs(rootfs: File): String {
-        val repairs = mutableListOf<String>()
-        repairs += repairDirectoryPermissionsOnce(rootfs)
-        repairs += repairPasswdEntry(rootfs)
+    fun repairRootfs(rootfs: File): List<RepairLine> = buildList {
+        addAll(repairDirectoryPermissionsOnce(rootfs))
+        addAll(repairPasswdEntry(rootfs))
         ensureSupplementaryGroups(rootfs)
-        repairs += repairHosts(rootfs)
+        addAll(repairHosts(rootfs))
         val rootDir = File(rootfs, "root")
-        if (!rootDir.exists() && rootDir.mkdirs()) repairs.add("Created /root")
-        repairs += repairShell(rootfs)
+        if (!rootDir.exists() && rootDir.mkdirs()) add(RepairLine("Created /root"))
+        addAll(repairShell(rootfs))
         if (needsResolvRewrite(File(rootfs, "etc/resolv.conf"))) {
             writeResolvConf(rootfs)
-            repairs.add("Created etc/resolv.conf")
+            add(RepairLine("Created etc/resolv.conf"))
         }
-        return repairs.joinToString("\n")
     }
 
-    private fun repairDirectoryPermissionsOnce(rootfs: File): List<String> {
+    private fun repairDirectoryPermissionsOnce(rootfs: File): List<RepairLine> {
         if (File(rootfs, ".perms_fixed").exists()) return emptyList()
         fixupDirectoryPermissions(rootfs)
         try {
             File(rootfs, ".perms_fixed").writeText("1")
         } catch (_: Exception) {}
-        return listOf("Fixed directory permissions")
+        return listOf(RepairLine("Fixed directory permissions"))
     }
 
-    private fun repairPasswdEntry(rootfs: File): List<String> {
+    private fun repairPasswdEntry(rootfs: File): List<RepairLine> {
         val uid = android.os.Process.myUid()
         val passwd = File(rootfs, "etc/passwd")
         if (passwd.exists() && passwd.readText().contains(":$uid:")) return emptyList()
         passwd.parentFile?.mkdirs()
         safeAppendText(passwd, "root:x:$uid:0:root:/root:/bin/sh\n")
-        return listOf("Added passwd entry for uid $uid")
+        return listOf(RepairLine("Added passwd entry for uid $uid"))
     }
 
-    private fun repairHosts(rootfs: File): List<String> {
+    private fun repairHosts(rootfs: File): List<RepairLine> {
         val hosts = File(rootfs, "etc/hosts")
         if (hosts.exists() && hosts.readText().contains("127.0.0.1")) return emptyList()
         hosts.parentFile?.mkdirs()
         safeWriteText(hosts, "127.0.0.1 localhost\n::1 localhost\n")
-        return listOf("Created /etc/hosts")
+        return listOf(RepairLine("Created /etc/hosts"))
     }
 
     /** Makes bin/sh usable, preferring a busybox symlink over a copy. */
-    private fun repairShell(rootfs: File): List<String> {
-        val repairs = mutableListOf<String>()
+    private fun repairShell(rootfs: File): List<RepairLine> {
+        val repairs = mutableListOf<RepairLine>()
         val busybox = File(rootfs, "bin/busybox")
         if (!busybox.exists()) {
-            repairs.add("WARN: bin/busybox not found in rootfs")
+            repairs.add(RepairLine("bin/busybox not found in rootfs", warning = true))
             val binDir = File(rootfs, "bin")
-            repairs.add(
-                if (binDir.exists()) {
-                    "bin/ contents: ${binDir.list()?.joinToString(", ") ?: "empty"}"
-                } else {
-                    "bin/ directory missing!"
-                }
-            )
+            if (binDir.exists()) {
+                repairs.add(
+                    RepairLine("bin/ contents: ${binDir.list()?.joinToString(", ") ?: "empty"}")
+                )
+            } else {
+                repairs.add(RepairLine("bin/ directory missing!", warning = true))
+            }
             return repairs
         }
         if (!busybox.canExecute()) {
             busybox.setExecutable(true, false)
-            repairs.add("Made bin/busybox executable")
+            repairs.add(RepairLine("Made bin/busybox executable"))
         }
         val sh = File(rootfs, "bin/sh")
         if (sh.exists() && sh.canExecute()) return repairs
@@ -623,11 +611,14 @@ class DistroInstaller(private val context: Context) {
         } catch (_: Exception) {
             busybox.copyTo(sh, overwrite = true)
             sh.setExecutable(true, false)
-            repairs.add("Copied bin/busybox -> bin/sh")
+            repairs.add(RepairLine("Copied bin/busybox -> bin/sh"))
         }
         repairs.add(
-            if (sh.canExecute()) "bin/sh is now executable"
-            else "WARN: bin/sh still not executable"
+            RepairLine(
+                if (sh.canExecute()) "bin/sh is now executable"
+                else "bin/sh still not executable",
+                warning = !sh.canExecute()
+            )
         )
         return repairs
     }
@@ -643,10 +634,13 @@ class DistroInstaller(private val context: Context) {
 
     fun saveInstalled(distroName: String) {
         val validName = validateDistroName(distroName)
-        File(context.filesDir, "installed").mkdirs()
-        File(context.filesDir, "installed/$validName").writeText(validName)
+        installedMarker(validName).writeText(validName)
         notifyDocumentRootsChanged()
     }
+
+    /** Marker file whose presence records [distroName] as installed. */
+    private fun installedMarker(distroName: String): File =
+        File(File(context.filesDir, "installed").apply { mkdirs() }, distroName)
 
     private fun validateDistroName(distroName: String): String {
         require(distroName.isNotBlank()) { "Distro name cannot be empty" }
@@ -673,7 +667,7 @@ class DistroInstaller(private val context: Context) {
         val rootfsParent = File(context.filesDir, "rootfs").canonicalFile
         rootfsParent.listFiles()?.forEach { dir ->
             if (dir.isDirectory && !FileUtil.isSymlink(dir) &&
-                !File(context.filesDir, "installed/${dir.name}").exists() &&
+                !installedMarker(dir.name).exists() &&
                 dir.lastModified() < huskCutoff
             ) {
                 Log.i("DistroInstaller", "Sweeping orphan rootfs ${dir.name}")

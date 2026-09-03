@@ -59,7 +59,7 @@ class TerminalService : Service() {
         super.onCreate()
         exiting = false
         startForeground(RedTApp.NOTIF_ID_TERMINAL, buildNotification())
-        if (sessionStore.sessions.value.isEmpty()) sweepStaleLaunchScripts()
+        if (sessionStore.sessions.isEmpty()) sweepStaleLaunchScripts()
     }
 
     private fun buildNotification(): android.app.Notification {
@@ -71,7 +71,7 @@ class TerminalService : Service() {
         )
         return NotificationCompat.Builder(this, RedTApp.CHANNEL_TERMINAL)
             .setContentTitle("RedT - ${DistroRegistry.alpine.name.replaceFirstChar { it.uppercase() }}")
-            .setContentText("${sessionStore.sessions.value.size} session(s) | Tap to open")
+            .setContentText("${sessionStore.sessions.size} session(s) | Tap to open")
             .setSmallIcon(com.redt.R.drawable.ic_notification)
             .setColor(themeAccentColor())
             .setContentIntent(pendingIntent)
@@ -84,6 +84,8 @@ class TerminalService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action != ACTION_EXIT) {
+            // EXIT must never (re)enter the foreground state; every other
+            // entry point has to hold the notification while it runs.
             startForeground(RedTApp.NOTIF_ID_TERMINAL, buildNotification())
         }
         when (intent?.action) {
@@ -108,10 +110,7 @@ class TerminalService : Service() {
             }
             else -> {
                 updateWakeLock()
-                if (sessionStore.sessions.value.isEmpty()) {
-                    stopForeground(STOP_FOREGROUND_REMOVE)
-                    stopSelf()
-                }
+                stopIfIdle()
             }
         }
         return START_NOT_STICKY
@@ -194,7 +193,7 @@ class TerminalService : Service() {
         serviceScope.launch {
             sessionStore.sessionFinished(session)
             RedTWidgetProvider.updateAll(this@TerminalService)
-            if (sessionStore.sessions.value.isEmpty()) {
+            if (sessionStore.sessions.isEmpty()) {
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             } else {
@@ -226,7 +225,7 @@ class TerminalService : Service() {
     }
 
     private fun stopIfIdle() {
-        if (sessionStore.sessions.value.isEmpty()) {
+        if (sessionStore.sessions.isEmpty()) {
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }

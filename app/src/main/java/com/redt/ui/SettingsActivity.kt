@@ -17,6 +17,7 @@ import com.redt.BuildConfig
 import com.redt.R
 import com.redt.service.TerminalService
 import com.redt.session.terminalSessionStore
+import com.redt.util.IntentStarter
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -158,16 +159,12 @@ class SettingsActivity : AppCompatActivity() {
             Toast.makeText(this, "Already exempt from battery optimization", Toast.LENGTH_SHORT).show()
             return
         }
-        try {
-            startActivity(Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                data = Uri.parse("package:$packageName")
-            })
-        } catch (_: Exception) {
-            try {
-                startActivity(Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
-            } catch (_: Exception) {
-                Toast.makeText(this, "Could not open battery optimization settings", Toast.LENGTH_SHORT).show()
-            }
+        val scoped = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+            data = Uri.parse("package:$packageName")
+        }
+        val generic = Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+        if (!IntentStarter.startFirstAvailable(this, scoped, generic)) {
+            Toast.makeText(this, "Could not open battery optimization settings", Toast.LENGTH_SHORT).show()
         }
     }
 

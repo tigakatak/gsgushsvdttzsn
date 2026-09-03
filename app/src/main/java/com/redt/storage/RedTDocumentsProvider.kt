@@ -183,11 +183,9 @@ class RedTDocumentsProvider : DocumentsProvider() {
 
     override fun isChildDocument(parentDocumentId: String, documentId: String): Boolean {
         return try {
-            val parent = resolveDocument(parentDocumentId)
-            val child = resolveDocument(documentId)
-            val parentPath = parent.absoluteFile.normalize().path
-            val childPath = child.absoluteFile.normalize().path
-            childPath == parentPath || childPath.startsWith(parentPath + File.separator)
+            val parent = resolveDocument(parentDocumentId).absoluteFile.normalize()
+            val child = resolveDocument(documentId).absoluteFile.normalize()
+            child == parent || child.isUnder(parent)
         } catch (_: Exception) {
             false
         }

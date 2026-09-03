@@ -10,13 +10,9 @@ class QuickSettingsTile : TileService() {
         updateTile()
     }
 
-    override fun onStopListening() {}
-
     override fun onTileAdded() {
         updateTile()
     }
-
-    override fun onTileRemoved() {}
 
     override fun onClick() {
         if (!isLocked) {
@@ -26,7 +22,7 @@ class QuickSettingsTile : TileService() {
 
     private fun updateTile() {
         val tile = qsTile ?: return
-        val sessions = terminalSessionStore.sessions.value
+        val sessions = terminalSessionStore.sessions
         tile.state = if (sessions.isNotEmpty()) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
         tile.label = if (sessions.isNotEmpty()) "RedT (${sessions.size})" else "RedT"
         tile.updateTile()

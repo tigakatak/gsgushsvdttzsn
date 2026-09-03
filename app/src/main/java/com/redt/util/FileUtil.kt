@@ -30,39 +30,41 @@ object FileUtil {
     }
 
     /**
-     * Deletes a file or directory tree safely:
-     * - never follows symlinks (lstat-based),
-     * - tracks visited canonical paths so a pathological link/hardlink cycle
-     *   cannot loop forever.
-     * Failures are logged, not thrown; returns false if any node could not
-     * be removed.
+     * Visits [root] and every node beneath it in post-order (children before
+     * their parent). Symlinks are treated as leaves and never followed;
+     * visited canonical paths are tracked so a pathological link/hardlink
+     * cycle cannot loop forever.
      */
-    fun deleteTreeWithoutFollowingLinks(file: File): Boolean {
+    fun walkTreeWithoutFollowingLinks(root: File, visit: (File) -> Unit) {
         val visited = mutableSetOf<String>()
-        var failed = false
-
-        fun deleteNode(f: File) {
+        fun visitNode(f: File) {
             val canonical = try {
                 f.canonicalPath
             } catch (_: Exception) {
                 f.absolutePath
             }
             if (!visited.add(canonical)) return
-            if (isSymlink(f) || !f.isDirectory) {
-                if (!f.delete() && existsWithoutFollowingLinks(f)) {
-                    failed = true
-                    Log.w(TAG, "Failed to delete ${f.absolutePath}")
-                }
-                return
+            if (!isSymlink(f) && f.isDirectory) {
+                f.listFiles()?.forEach { visitNode(it) }
             }
-            f.listFiles()?.forEach { deleteNode(it) }
+            visit(f)
+        }
+        visitNode(root)
+    }
+
+    /**
+     * Deletes a file or directory tree safely; symlink and cycle guarantees
+     * come from [walkTreeWithoutFollowingLinks]. Failures are logged, not
+     * thrown; returns false if any node could not be removed.
+     */
+    fun deleteTreeWithoutFollowingLinks(file: File): Boolean {
+        var failed = false
+        walkTreeWithoutFollowingLinks(file) { f ->
             if (!f.delete() && existsWithoutFollowingLinks(f)) {
                 failed = true
-                Log.w(TAG, "Failed to delete dir ${f.absolutePath}")
+                Log.w(TAG, "Failed to delete ${f.absolutePath}")
             }
         }
-
-        deleteNode(file)
         return !failed
     }
 }

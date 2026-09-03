@@ -13,24 +13,11 @@ object Format {
         else -> "${"%.2f".format(sizeBytes / 1_000_000_000.0)} GB"
     }
 
-    fun dirSize(dir: File): Long {
+    private fun dirSize(dir: File): Long {
         var total = 0L
-        val visited = mutableSetOf<String>()
-        fun walk(d: File) {
-            val canonical = try { d.canonicalPath } catch (_: Exception) { d.absolutePath }
-            if (canonical in visited) return
-            visited.add(canonical)
-            d.listFiles()?.forEach { f ->
-                if (!FileUtil.isSymlink(f)) {
-                    if (f.isFile) {
-                        total += f.length()
-                    } else if (f.isDirectory) {
-                        walk(f)
-                    }
-                }
-            }
+        FileUtil.walkTreeWithoutFollowingLinks(dir) { f ->
+            if (f.isFile && !FileUtil.isSymlink(f)) total += f.length()
         }
-        walk(dir)
         return total
     }
 
@@ -63,14 +50,5 @@ object Format {
             sizeCache[dir.absolutePath] = CacheEntry(bytes, System.currentTimeMillis())
             mainHandler.post { onResult(bytes) }
         }
-    }
-
-    /**
-     * Runs [block] on the background size-computation executor. Useful for
-     * callers (e.g. widget updates) that need to perform cheap file I/O off the
-     * main thread without spinning up their own thread.
-     */
-    fun runOnBackground(block: () -> Unit) {
-        executor.execute(block)
     }
 }

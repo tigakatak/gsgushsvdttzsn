@@ -16,14 +16,12 @@ import kotlin.math.roundToInt
 
 class TerminalBackend(
     val view: TerminalView,
-    context: Context
+    context: Context,
+    private val modifiers: ModifierState
 ) : TerminalSessionClient, TerminalViewClient {
 
     private val context = context.applicationContext
 
-    private var ctrlDown = false
-    private var altDown = false
-    private var shiftDown = false
     // Initialized once by the init block below via applyFontSize().
     private var fontSize = 0f
 
@@ -128,17 +126,13 @@ class TerminalBackend(
 
     override fun onLongPress(event: MotionEvent): Boolean = false
 
-    override fun readControlKey(): Boolean = ctrlDown
-    override fun readAltKey(): Boolean = altDown
-    override fun readShiftKey(): Boolean = shiftDown
+    override fun readControlKey(): Boolean = modifiers.isActive(TerminalModifier.CTRL)
+    override fun readAltKey(): Boolean = modifiers.isActive(TerminalModifier.ALT)
+    override fun readShiftKey(): Boolean = modifiers.isActive(TerminalModifier.SHIFT)
     override fun readFnKey(): Boolean = false
 
-    fun setCtrl(v: Boolean) { ctrlDown = v }
-    fun setAlt(v: Boolean) { altDown = v }
-    fun setShift(v: Boolean) { shiftDown = v }
-
     override fun onCodePoint(codePoint: Int, ctrlDown: Boolean, session: TerminalSession): Boolean {
-        if (this.ctrlDown || this.altDown || this.shiftDown) {
+        if (modifiers.any()) {
             view.post { onModifierConsumed?.invoke() }
         }
         return false

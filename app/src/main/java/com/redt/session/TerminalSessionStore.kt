@@ -15,11 +15,25 @@ import java.util.IdentityHashMap
 
 internal class TerminalSessionStore {
 
-    private val _sessions = MutableStateFlow<List<TerminalSession>>(emptyList())
-    val sessions: StateFlow<List<TerminalSession>> = _sessions.asStateFlow()
+    /**
+     * The session list and the selected index as one atomic value: collectors
+     * can never observe a stale index paired with a fresh list (which the
+     * previous two-StateFlow design allowed while they emitted out of step).
+     */
+    data class State(
+        val sessions: List<TerminalSession> = emptyList(),
+        val currentIndex: Int = -1,
+    )
 
-    private val _currentIndex = MutableStateFlow(-1)
-    val currentIndex: StateFlow<Int> = _currentIndex.asStateFlow()
+    private val _state = MutableStateFlow(State())
+    val state: StateFlow<State> = _state.asStateFlow()
+
+    /**
+     * Synchronous snapshots for one-off reads; mutations happen on the main
+     * thread, so these never tear mid-callback.
+     */
+    val sessions: List<TerminalSession> get() = _state.value.sessions
+    val currentIndex: Int get() = _state.value.currentIndex
 
     private val _exitSignal = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val exitSignal: SharedFlow<Unit> = _exitSignal.asSharedFlow()
@@ -32,7 +46,7 @@ internal class TerminalSessionStore {
     ) {
         synchronized(this) {
             sessionClients[session] = clientBridge
-            _sessions.value = _sessions.value + session
+            _state.value = _state.value.copy(sessions = _state.value.sessions + session)
         }
     }
 
@@ -46,7 +60,7 @@ internal class TerminalSessionStore {
 
     fun removeSession(index: Int) {
         synchronized(this) {
-            val current = _sessions.value
+            val current = _state.value.sessions
             if (index !in current.indices) return
             val removed = current[index]
             removeFromStateLocked(removed)
@@ -56,33 +70,33 @@ internal class TerminalSessionStore {
 
     internal fun sessionFinished(session: TerminalSession) {
         synchronized(this) {
-            if (session !in _sessions.value) return
             removeFromStateLocked(session)
         }
     }
 
     /**
-     * Removes [session] from the store and fixes up the current index.
- * Caller must hold the monitor. Does not finish the session itself:
- * [removeSession] does, [sessionFinished] must not.
+     * Removes [session] from the state and fixes up the current index.
+     * Caller must hold the monitor. Does not finish the session itself:
+     * [removeSession] does, [sessionFinished] must not.
      */
     private fun removeFromStateLocked(session: TerminalSession) {
-        val index = _sessions.value.indexOf(session)
+        val old = _state.value
+        val index = old.sessions.indexOf(session)
         if (index < 0) return
-        _sessions.value = _sessions.value.toMutableList().apply { removeAt(index) }
         sessionClients.remove(session)?.detachAll()
-        if (_currentIndex.value >= _sessions.value.size) {
-            _currentIndex.value = _sessions.value.size - 1
-        } else if (index < _currentIndex.value) {
-            _currentIndex.value--
+        val sessions = old.sessions.toMutableList().apply { removeAt(index) }
+        val currentIndex = when {
+            old.currentIndex >= sessions.size -> sessions.size - 1
+            index < old.currentIndex -> old.currentIndex - 1
+            else -> old.currentIndex
         }
+        _state.value = State(sessions, currentIndex)
     }
 
     fun finishAllSessions() {
         synchronized(this) {
-            val active = _sessions.value
-            _sessions.value = emptyList()
-            _currentIndex.value = -1
+            val active = _state.value.sessions
+            _state.value = State()
             sessionClients.values.forEach { it.detachAll() }
             sessionClients.clear()
             active.forEach { it.finishIfRunning() }
@@ -91,13 +105,13 @@ internal class TerminalSessionStore {
 
     fun switchToSession(session: TerminalSession): Boolean {
         synchronized(this) {
-            val idx = _sessions.value.indexOf(session)
+            val idx = _state.value.sessions.indexOf(session)
             if (idx >= 0) {
-                _currentIndex.value = idx
+                _state.value = _state.value.copy(currentIndex = idx)
                 return true
             }
+            return false
         }
-        return false
     }
 
     fun signalExit() {

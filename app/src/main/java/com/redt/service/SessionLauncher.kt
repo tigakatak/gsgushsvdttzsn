@@ -28,9 +28,9 @@ internal class SessionLauncher(context: Context) {
         val rootfsDir = installer.getRootfsDir(DistroRegistry.alpine.name)
         require(rootfsDir.exists()) { "Alpine rootfs not installed" }
 
-        val repairLog = installer.repairRootfs(rootfsDir)
-        if (repairLog.contains("WARN") || repairLog.contains("missing")) {
-            Log.w("SessionLauncher", "Rootfs issues:\n$repairLog")
+        val repairs = installer.repairRootfs(rootfsDir)
+        if (repairs.any { it.warning }) {
+            Log.w("SessionLauncher", "Rootfs issues:\n${repairs.joinToString("\n") { it.message }}")
         }
 
         prepareRuntimeDirectories(rootfsDir)
@@ -193,9 +193,8 @@ if command -v bash >/dev/null 2>&1; then
     exec bash -i
 fi
 """
-        val needsRewrite = !startup.exists() ||
-            runCatching { startup.readText() != startupScript }.getOrDefault(true)
-        if (needsRewrite) {
+        val current = runCatching { startup.readText() }.getOrDefault("")
+        if (current != startupScript) {
             startup.writeText(startupScript)
         }
     }
