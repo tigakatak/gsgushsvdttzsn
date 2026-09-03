@@ -25,6 +25,7 @@ object Prefs {
     const val UV_THREADPOOL_SIZE = 16
     const val ULIMIT_NOFILE = 65536
     const val ULIMIT_NPROC = 65536
+    const val WAKELOCK_DEFAULT = true
     // The em-dash key writes a literal "-" to the terminal; intentional.
     const val EXTRA_KEYS_ROW1_DEFAULT = "\u2630 ESC \u25B2 \u2014 /"
     const val EXTRA_KEYS_ROW2_DEFAULT = "TAB \u25C0 \u25BC \u25B6 CTRL"

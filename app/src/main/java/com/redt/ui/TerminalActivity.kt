@@ -370,7 +370,7 @@ class TerminalActivity : AppCompatActivity() {
     )
 
     private fun keyAction(label: String): () -> Unit {
-        val action = keyActions[label] ?: { session?.write(label) }
+        val action: () -> Unit = keyActions[label] ?: { session?.write(label) }
         if (label in modifierActive) return action
         return {
             if (session != null || label == "\u2630" || label == "MENU") {

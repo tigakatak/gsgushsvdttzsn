@@ -271,6 +271,12 @@ class RedTDocumentsProvider : DocumentsProvider() {
         return file.path == rootPath || file.isUnder(File(rootPath))
     }
 
+    private fun isSafeTarget(file: File): Boolean = try {
+        isInsideAlpine(file.canonicalFile)
+    } catch (_: IOException) {
+        false
+    }
+
     private fun mimeTypeFor(file: File): String {
         val extension = file.extension.lowercase()
         return MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)

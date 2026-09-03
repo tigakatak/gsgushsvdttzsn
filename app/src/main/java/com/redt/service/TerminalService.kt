@@ -18,6 +18,7 @@ import com.redt.ui.Prefs
 import com.redt.ui.TerminalActivity
 import com.redt.ui.RedTWidgetProvider
 import com.redt.ui.prefs
+import com.redt.ui.themeAccentColor
 import com.redt.session.terminalSessionStore
 import com.termux.terminal.TerminalSession
 import kotlinx.coroutines.CoroutineScope
