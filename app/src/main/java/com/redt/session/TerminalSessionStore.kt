@@ -49,29 +49,32 @@ internal class TerminalSessionStore {
             val current = _sessions.value
             if (index !in current.indices) return
             val removed = current[index]
-            _sessions.value = current.toMutableList().apply { removeAt(index) }
-            sessionClients.remove(removed)?.detachAll()
+            removeFromStateLocked(removed)
             removed.finishIfRunning()
-            if (_currentIndex.value >= _sessions.value.size) {
-                _currentIndex.value = _sessions.value.size - 1
-            } else if (index < _currentIndex.value) {
-                _currentIndex.value = _currentIndex.value - 1
-            }
         }
     }
 
     internal fun sessionFinished(session: TerminalSession) {
         synchronized(this) {
-            val index = _sessions.value.indexOf(session)
-            if (index < 0) return
-            val current = _sessions.value
-            _sessions.value = current.toMutableList().apply { removeAt(index) }
-            sessionClients.remove(session)?.detachAll()
-            if (_currentIndex.value >= _sessions.value.size) {
-                _currentIndex.value = _sessions.value.size - 1
-            } else if (index < _currentIndex.value) {
-                _currentIndex.value--
-            }
+            if (session !in _sessions.value) return
+            removeFromStateLocked(session)
+        }
+    }
+
+    /**
+     * Removes [session] from the store and fixes up the current index.
+ * Caller must hold the monitor. Does not finish the session itself:
+ * [removeSession] does, [sessionFinished] must not.
+     */
+    private fun removeFromStateLocked(session: TerminalSession) {
+        val index = _sessions.value.indexOf(session)
+        if (index < 0) return
+        _sessions.value = _sessions.value.toMutableList().apply { removeAt(index) }
+        sessionClients.remove(session)?.detachAll()
+        if (_currentIndex.value >= _sessions.value.size) {
+            _currentIndex.value = _sessions.value.size - 1
+        } else if (index < _currentIndex.value) {
+            _currentIndex.value--
         }
     }
 

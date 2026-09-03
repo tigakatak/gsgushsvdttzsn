@@ -57,20 +57,17 @@ class RedTWidgetProvider : AppWidgetProvider() {
                 // refresh itself does file I/O (directory listing, cache
                 // lookup), so dispatch it to a background thread to avoid
                 // blocking the main thread / triggering ANRs on first refresh.
-                Format.dirSizeAsync(rootfsDir) { bytes ->
-                    if (bytes >= 0) {
-                        Format.runOnBackground {
-                            updateWidget(context, appWidgetManager, widgetId)
-                        }
+                // The cache is now warm, so the recursive refresh stops here.
+                Format.dirSizeAsync(rootfsDir) {
+                    Format.runOnBackground {
+                        updateWidget(context, appWidgetManager, widgetId)
                     }
                 }
             }
         }
         views.setOnClickPendingIntent(R.id.widget_root, PendingIntent.getActivity(
             context, widgetId,
-            Intent(context, TerminalActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            },
+            TerminalActivity.launchIntent(context),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         ))
         appWidgetManager.updateAppWidget(widgetId, views)

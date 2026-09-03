@@ -10,6 +10,9 @@ object Prefs {
     const val KEY_SCROLLBACK = "scrollback"
     const val KEY_AUTOHIDE_KEYS = "autohide_keys"
     const val KEY_WAKELOCK = "wakelock"
+    const val KEY_EXTRA_KEYS_ROW1 = "extra_keys_row1"
+    const val KEY_EXTRA_KEYS_ROW2 = "extra_keys_row2"
+    const val KEY_STORAGE_ASK_TIME = "storage_ask_time"
 
     const val SCROLLBACK_DEFAULT = 4
     const val FONT_SIZE_DEFAULT = 20
@@ -22,7 +25,9 @@ object Prefs {
     const val UV_THREADPOOL_SIZE = 16
     const val ULIMIT_NOFILE = 65536
     const val ULIMIT_NPROC = 65536
-    const val WAKELOCK_DEFAULT = true
+    // The em-dash key writes a literal "-" to the terminal; intentional.
+    const val EXTRA_KEYS_ROW1_DEFAULT = "\u2630 ESC \u25B2 \u2014 /"
+    const val EXTRA_KEYS_ROW2_DEFAULT = "TAB \u25C0 \u25BC \u25B6 CTRL"
 
     val SCROLLBACK_ROWS = intArrayOf(500, 1000, 2000, 3000, 5000, 7500, 10000, 15000, 20000, 30000)
 

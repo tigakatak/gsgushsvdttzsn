@@ -1,14 +1,13 @@
 package com.redt.ui
 
-import android.content.ClipData
 import android.content.Context
-import android.os.Build
 import android.util.Log
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.inputmethod.InputMethodManager
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import com.redt.util.Clipboard
 import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
 import com.termux.view.TerminalView
@@ -25,9 +24,12 @@ class TerminalBackend(
     private var ctrlDown = false
     private var altDown = false
     private var shiftDown = false
-    private var fontSize = context.prefs()
-        .getInt(Prefs.KEY_FONT_SIZE, Prefs.FONT_SIZE_DEFAULT)
-        .coerceIn(Prefs.FONT_SIZE_MIN, Prefs.FONT_SIZE_MAX).toFloat()
+    // Initialized once by the init block below via applyFontSize().
+    private var fontSize = 0f
+
+    init {
+        applyFontSize()
+    }
     var onSessionFinished: ((TerminalSession) -> Unit)? = null
     var onModifierConsumed: (() -> Unit)? = null
     var onEmulatorReady: (() -> Unit)? = null
@@ -43,23 +45,11 @@ class TerminalBackend(
     }
 
     override fun onCopyTextToClipboard(session: TerminalSession, text: String) {
-        val clip = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
-        if (clip == null) return
-        if (Build.VERSION.SDK_INT >= 33) {
-            clip.setPrimaryClip(ClipData.newPlainText("terminal", text))
-        } else {
-            @Suppress("DEPRECATION") clip.setText(text)
-        }
+        Clipboard.copy(context, text)
     }
 
     override fun onPasteTextFromClipboard(session: TerminalSession?) {
-        val clip = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager ?: return
-        val text = if (Build.VERSION.SDK_INT >= 33) {
-            clip.primaryClip?.getItemAt(0)?.text
-        } else {
-            @Suppress("DEPRECATION") clip.text
-        } ?: return
-        view.mEmulator?.paste(text.toString())
+        Clipboard.primaryText(context)?.let { text -> view.mEmulator?.paste(text) }
     }
 
     override fun onBell(session: TerminalSession) {}

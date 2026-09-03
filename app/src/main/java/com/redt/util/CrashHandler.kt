@@ -36,9 +36,15 @@ object CrashHandler {
                 Log.e("CrashHandler", "Failed to write crash log", e)
             }
             Log.e("CrashHandler", "Uncaught exception in ${thread.name}", throwable)
-            previousHandler?.uncaughtException(thread, throwable)
-            android.os.Process.killProcess(android.os.Process.myPid())
-            System.exit(1)
+            previousHandler?.let {
+                // The default handler shows the crash dialog and kills the
+                // process itself; only fall back to a manual kill when there
+                // is no previous handler installed.
+                it.uncaughtException(thread, throwable)
+            } ?: run {
+                android.os.Process.killProcess(android.os.Process.myPid())
+                System.exit(1)
+            }
         }
     }
 

@@ -8,10 +8,11 @@ import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
 import android.provider.DocumentsProvider
-import android.system.Os
-import android.system.OsConstants
 import android.webkit.MimeTypeMap
 import com.redt.R
+import com.redt.distro.DistroRegistry
+import com.redt.util.FileUtil
+import com.redt.util.isUnder
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.IOException
@@ -61,7 +62,7 @@ class RedTDocumentsProvider : DocumentsProvider() {
      * existence, and creating it early would break the install flow.
      */
     private val alpineRoot
-        get() = File(appContext.filesDir, "rootfs/alpine")
+        get() = File(File(appContext.filesDir, "rootfs"), DistroRegistry.alpine.name)
 
     override fun onCreate(): Boolean = true
 
@@ -86,7 +87,7 @@ class RedTDocumentsProvider : DocumentsProvider() {
     override fun queryDocument(documentId: String, projection: Array<out String>?): Cursor {
         val cursor = MatrixCursor(projection ?: DOCUMENT_PROJECTION)
         val file = resolveDocument(documentId)
-        if (!existsWithoutFollowingLinks(file)) throw FileNotFoundException(documentId)
+        if (!FileUtil.existsWithoutFollowingLinks(file)) throw FileNotFoundException(documentId)
         includeDocument(cursor, documentId, file)
         return cursor
     }
@@ -98,7 +99,7 @@ class RedTDocumentsProvider : DocumentsProvider() {
     ): Cursor {
         val cursor = MatrixCursor(projection ?: DOCUMENT_PROJECTION)
         // Alpine not installed yet: show an empty root instead of failing.
-        if (parentDocumentId == ROOT_DOCUMENT_ID && !existsWithoutFollowingLinks(alpineRoot)) {
+        if (parentDocumentId == ROOT_DOCUMENT_ID && !FileUtil.existsWithoutFollowingLinks(alpineRoot)) {
             return cursor
         }
 
@@ -118,7 +119,7 @@ class RedTDocumentsProvider : DocumentsProvider() {
         signal: CancellationSignal?,
     ): ParcelFileDescriptor {
         val file = resolveDocument(documentId)
-        if (!existsWithoutFollowingLinks(file) || file.isDirectory || !isSafeTarget(file)) {
+        if (!FileUtil.existsWithoutFollowingLinks(file) || file.isDirectory || !isSafeTarget(file)) {
             throw FileNotFoundException(documentId)
         }
         return try {
@@ -150,7 +151,7 @@ class RedTDocumentsProvider : DocumentsProvider() {
             throw FileNotFoundException(parentDocumentId)
         }
         val file = File(parent, displayName)
-        if (existsWithoutFollowingLinks(file)) throw IOException("$displayName already exists")
+        if (FileUtil.existsWithoutFollowingLinks(file)) throw IOException("$displayName already exists")
 
         val created = if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
             file.mkdir()
@@ -165,7 +166,7 @@ class RedTDocumentsProvider : DocumentsProvider() {
     override fun deleteDocument(documentId: String) {
         val file = resolveMutableDocument(documentId)
         val parentId = documentIdFor(requireNotNull(file.parentFile))
-        if (!deleteWithoutFollowingLinks(file)) throw IOException("Unable to delete ${file.name}")
+        if (!FileUtil.deleteTreeWithoutFollowingLinks(file)) throw IOException("Unable to delete ${file.name}")
         notifyChildrenChanged(parentId)
     }
 
@@ -174,7 +175,7 @@ class RedTDocumentsProvider : DocumentsProvider() {
         val file = resolveMutableDocument(documentId)
         val parent = requireNotNull(file.parentFile)
         val renamed = File(parent, displayName)
-        if (existsWithoutFollowingLinks(renamed)) throw IOException("$displayName already exists")
+        if (FileUtil.existsWithoutFollowingLinks(renamed)) throw IOException("$displayName already exists")
         if (!file.renameTo(renamed)) throw IOException("Unable to rename ${file.name}")
         notifyChildrenChanged(documentIdFor(parent))
         return documentIdFor(renamed)
@@ -194,7 +195,7 @@ class RedTDocumentsProvider : DocumentsProvider() {
 
     private fun includeDocument(cursor: MatrixCursor, documentId: String, file: File) {
         val isRoot = documentId == ROOT_DOCUMENT_ID
-        val isLink = !isRoot && isSymbolicLink(file)
+        val isLink = !isRoot && FileUtil.isSymlink(file)
         val safeTarget = isRoot || isSafeTarget(file)
         val isDirectory = safeTarget && file.isDirectory
 
@@ -253,7 +254,7 @@ class RedTDocumentsProvider : DocumentsProvider() {
             throw FileNotFoundException("The Alpine rootfs root is managed by RedT")
         }
         val file = resolveDocument(documentId)
-        if (!existsWithoutFollowingLinks(file)) throw FileNotFoundException(documentId)
+        if (!FileUtil.existsWithoutFollowingLinks(file)) throw FileNotFoundException(documentId)
         return file
     }
 
@@ -267,32 +268,7 @@ class RedTDocumentsProvider : DocumentsProvider() {
 
     private fun isInsideAlpine(file: File): Boolean {
         val rootPath = alpineRoot.canonicalFile.path
-        val filePath = file.path
-        return filePath == rootPath || filePath.startsWith(rootPath + File.separator)
-    }
-
-    private fun isSafeTarget(file: File): Boolean = try {
-        isInsideAlpine(file.canonicalFile)
-    } catch (_: IOException) {
-        false
-    }
-
-    private fun isSymbolicLink(file: File): Boolean = try {
-        OsConstants.S_ISLNK(Os.lstat(file.absolutePath).st_mode)
-    } catch (_: Exception) {
-        false
-    }
-
-    private fun existsWithoutFollowingLinks(file: File): Boolean =
-        file.exists() || isSymbolicLink(file)
-
-    private fun deleteWithoutFollowingLinks(file: File): Boolean {
-        if (isSymbolicLink(file) || !file.isDirectory) return file.delete()
-        val children = file.listFiles() ?: return false
-        for (child in children) {
-            if (!deleteWithoutFollowingLinks(child)) return false
-        }
-        return file.delete()
+        return file.path == rootPath || file.isUnder(File(rootPath))
     }
 
     private fun mimeTypeFor(file: File): String {

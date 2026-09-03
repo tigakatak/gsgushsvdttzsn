@@ -50,14 +50,11 @@ class SettingsActivity : AppCompatActivity() {
 
         wakelockSwitch.setOnCheckedChangeListener { _, isChecked ->
             prefs.edit().putBoolean(Prefs.KEY_WAKELOCK, isChecked).apply()
+            // Both directions go through startForegroundService so the
+            // toggle works whether or not the service is already running.
             val svc = Intent(this, TerminalService::class.java)
-            if (isChecked) {
-                svc.action = TerminalService.ACTION_ACQUIRE
-                ContextCompat.startForegroundService(this, svc)
-            } else {
-                svc.action = TerminalService.ACTION_RELEASE
-                startService(svc)
-            }
+                .setAction(if (isChecked) TerminalService.ACTION_ACQUIRE else TerminalService.ACTION_RELEASE)
+            ContextCompat.startForegroundService(this, svc)
         }
 
         val batteryBtn = findViewById<TextView>(R.id.battery_opt_btn)
@@ -78,26 +75,18 @@ class SettingsActivity : AppCompatActivity() {
             prefs.edit().putBoolean(Prefs.KEY_AUTOHIDE_KEYS, isChecked).apply()
         }
 
-        val defaultRow1 = "\u2630 ESC \u25B2 \u2014 /"
-        val defaultRow2 = "TAB \u25C0 \u25BC \u25B6 CTRL"
         val row1Input = findViewById<EditText>(R.id.extra_keys_row1_input)
         val row2Input = findViewById<EditText>(R.id.extra_keys_row2_input)
-        row1Input.setText(prefs.getString("extra_keys_row1", defaultRow1))
-        row2Input.setText(prefs.getString("extra_keys_row2", defaultRow2))
+        row1Input.setText(prefs.getString(Prefs.KEY_EXTRA_KEYS_ROW1, Prefs.EXTRA_KEYS_ROW1_DEFAULT))
+        row2Input.setText(prefs.getString(Prefs.KEY_EXTRA_KEYS_ROW2, Prefs.EXTRA_KEYS_ROW2_DEFAULT))
         findViewById<TextView>(R.id.save_extra_keys_btn).setOnClickListener {
-            prefs.edit()
-                .putString("extra_keys_row1", row1Input.text.toString().trim())
-                .putString("extra_keys_row2", row2Input.text.toString().trim())
-                .apply()
+            saveExtraKeys(row1Input.text.toString(), row2Input.text.toString())
             Toast.makeText(this, "Extra keys saved", Toast.LENGTH_SHORT).show()
         }
         findViewById<TextView>(R.id.reset_extra_keys_btn).setOnClickListener {
-            row1Input.setText(defaultRow1)
-            row2Input.setText(defaultRow2)
-            prefs.edit()
-                .putString("extra_keys_row1", row1Input.text.toString().trim())
-                .putString("extra_keys_row2", row2Input.text.toString().trim())
-                .apply()
+            row1Input.setText(Prefs.EXTRA_KEYS_ROW1_DEFAULT)
+            row2Input.setText(Prefs.EXTRA_KEYS_ROW2_DEFAULT)
+            saveExtraKeys(Prefs.EXTRA_KEYS_ROW1_DEFAULT, Prefs.EXTRA_KEYS_ROW2_DEFAULT)
             Toast.makeText(this, "Extra keys reset", Toast.LENGTH_SHORT).show()
         }
 
@@ -121,6 +110,13 @@ class SettingsActivity : AppCompatActivity() {
                 .show()
         }
 
+    }
+
+    private fun saveExtraKeys(row1: String, row2: String) {
+        prefs().edit()
+            .putString(Prefs.KEY_EXTRA_KEYS_ROW1, row1.trim())
+            .putString(Prefs.KEY_EXTRA_KEYS_ROW2, row2.trim())
+            .apply()
     }
 
     private fun shareCrashLog(file: File) {

@@ -51,7 +51,7 @@ class ExtraKeysPagerAdapter(
                     )
                     gravity = Gravity.CENTER_VERTICAL
                     hint = "Type and press Enter to send"
-                    setTextColor(activity.themeColor(R.attr.terminalText, 0xFFCDD6F4.toInt()))
+                    setTextColor(activity.terminalTextColor())
                     setHintTextColor(activity.hintColor())
                     textSize = 14f
                     setOnEditorActionListener { _, actionId, _ ->

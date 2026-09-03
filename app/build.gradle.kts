@@ -111,5 +111,4 @@ dependencies {
     implementation(project(":core:terminal-view"))
     implementation("com.github.anrwatchdog:anrwatchdog:1.4.0")
 
-    implementation(project(":core:proot"))
 }

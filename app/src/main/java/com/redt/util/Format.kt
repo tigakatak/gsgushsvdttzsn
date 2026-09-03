@@ -8,7 +8,7 @@ import java.util.concurrent.Executors
 
 object Format {
     fun size(sizeBytes: Long): String = when {
-        sizeBytes < 1_000_000 -> "${sizeBytes / 1000} KB"
+        sizeBytes < 1_000_000 -> "${(sizeBytes + 999) / 1000} KB"
         sizeBytes < 1_000_000_000 -> "${"%.1f".format(sizeBytes / 1_000_000.0)} MB"
         else -> "${"%.2f".format(sizeBytes / 1_000_000_000.0)} GB"
     }
@@ -21,10 +21,7 @@ object Format {
             if (canonical in visited) return
             visited.add(canonical)
             d.listFiles()?.forEach { f ->
-                val isSymlink = try {
-                    java.nio.file.Files.isSymbolicLink(f.toPath())
-                } catch (_: Exception) { false }
-                if (!isSymlink) {
+                if (!FileUtil.isSymlink(f)) {
                     if (f.isFile) {
                         total += f.length()
                     } else if (f.isDirectory) {
@@ -66,10 +63,6 @@ object Format {
             sizeCache[dir.absolutePath] = CacheEntry(bytes, System.currentTimeMillis())
             mainHandler.post { onResult(bytes) }
         }
-    }
-
-    fun invalidateAll() {
-        sizeCache.clear()
     }
 
     /**

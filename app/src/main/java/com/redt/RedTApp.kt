@@ -13,7 +13,7 @@ class RedTApp : Application() {
     override fun onCreate() {
         super.onCreate()
         CrashHandler.init(this)
-        com.redt.util.Format.invalidateAll()
+
         if (BuildConfig.DEBUG) {
             android.os.StrictMode.setThreadPolicy(
                 android.os.StrictMode.ThreadPolicy.Builder()

@@ -3,10 +3,10 @@ package com.redt.distro
 import android.content.Context
 import android.os.StatFs
 import android.provider.DocumentsContract
-import android.system.Os
-import android.system.OsConstants
 import android.util.Log
 import com.redt.ui.Prefs
+import com.redt.util.FileUtil
+import com.redt.util.isUnder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -28,16 +28,19 @@ class DistroInstaller(private val context: Context) {
     private val generation = AtomicInteger(0)
 
     @Volatile
-    var cancelled = false
+    private var cancelled = false
 
     fun cancel() {
         cancelled = true
     }
 
     /**
-     * Starts a new job: clears the cancel flag and bumps the generation so a
-     * still-draining previous job fails its next [checkCancel] even though
-     * the shared [cancelled] flag has been reset.
+     * Cancellation needs two cooperating mechanisms because installs run
+     * blocking IO loops that never observe coroutine cancellation:
+     * - [cancelled] stops the *current* job's loops ([cancel]) while still
+     *   letting that job's cleanup run;
+     * - the generation counter invalidates a *previous* job that keeps
+     * draining on an IO thread after a retry already reset the flag.
      */
     private fun beginJob(): Int {
         cancelled = false
@@ -59,7 +62,7 @@ class DistroInstaller(private val context: Context) {
             val tarball = cachedTarballFile(distro)
             if (tarball.exists()) tarball.delete()
             val partial = File(tarballDir(), tarball.name + ".part")
-            val tarballUrl = distro.tarballUrl()
+            val tarballUrl = distro.tarballUrl
             Log.i("DistroInstaller", "Downloading $tarballUrl")
 
             downloadTarball(tarballUrl, tarball, partial, onProgress, gen)
@@ -86,15 +89,15 @@ class DistroInstaller(private val context: Context) {
             Log.i("DistroInstaller", "Install complete for ${distro.name}")
         } catch (e: CancelledException) {
             Log.i("DistroInstaller", "Install cancelled for ${distro.name}")
-            cleanup(distro.name, gen)
+            cleanup(distro, gen)
             throw e
         } catch (e: kotlinx.coroutines.CancellationException) {
-            cleanup(distro.name, gen)
+            cleanup(distro, gen)
             throw e
         } catch (e: Exception) {
             Log.e("DistroInstaller", "Install failed", e)
-            cleanup(distro.name, gen)
-            throw Exception("Install failed: ${e.message}", e)
+            cleanup(distro, gen)
+            throw e
         }
     }
 
@@ -102,7 +105,7 @@ class DistroInstaller(private val context: Context) {
         File(context.filesDir, "tarballs").apply { mkdirs() }
 
     private fun cachedTarballName(distro: Distro): String {
-        val url = distro.tarballUrl()
+        val url = distro.tarballUrl
         return when {
             url.endsWith(".tar.gz", true) -> "${distro.name}.tar.gz"
             else -> "${distro.name}.tar"
@@ -117,59 +120,20 @@ class DistroInstaller(private val context: Context) {
     /**
      * Deletes a rootfs tree safely:
      * - runs on Dispatchers.IO regardless of caller,
-     * - never follows symlinks (lstat-based, like
-     *   RedTDocumentsProvider.deleteWithoutFollowingLinks),
+     * - never follows symlinks (see [FileUtil]),
      * - tracks visited canonical paths so symlink cycles cannot loop forever.
-     * Failures are logged, not thrown; returns false if any node could not be
-     * removed.
+     * Failures are logged, not thrown; returns false if any node could not
+     * be removed.
      */
     suspend fun deleteRootfsSafe(dir: File): Boolean = withContext(Dispatchers.IO) {
-        if (!dir.exists()) return@withContext true
-        val visited = mutableSetOf<String>()
-        var failed = false
-
-        fun deleteNode(f: File) {
-            val canonical = try {
-                f.canonicalPath
-            } catch (_: Exception) {
-                f.absolutePath
-            }
-            if (!visited.add(canonical)) return
-            val isLink = try {
-                OsConstants.S_ISLNK(Os.lstat(f.absolutePath).st_mode)
-            } catch (_: Exception) {
-                false
-            }
-            if (isLink || !f.isDirectory) {
-                if (!f.delete() && existsRegardlessOfLink(f)) {
-                    failed = true
-                    Log.w("DistroInstaller", "Failed to delete ${f.absolutePath}")
-                }
-                return
-            }
-            f.listFiles()?.forEach { deleteNode(it) }
-            if (!f.delete() && existsRegardlessOfLink(f)) {
-                failed = true
-                Log.w("DistroInstaller", "Failed to delete dir ${f.absolutePath}")
-            }
-        }
-
-        deleteNode(dir)
-        !failed
-    }
-
-    private fun existsRegardlessOfLink(f: File): Boolean = try {
-        val stat = Os.lstat(f.absolutePath)
-        stat.st_mode != 0
-    } catch (_: Exception) {
-        f.exists()
+        if (!dir.exists()) true else FileUtil.deleteTreeWithoutFollowingLinks(dir)
     }
 
     private fun checkCancel(gen: Int) {
         if (cancelled || generation.get() != gen) throw CancelledException()
     }
 
-    private suspend fun cleanup(distroName: String, gen: Int) {
+    private suspend fun cleanup(distro: Distro, gen: Int) {
         // A newer job now owns these paths and handles them itself; deleting
         // here would race its download/extraction.
         if (generation.get() != gen) return
@@ -178,22 +142,29 @@ class DistroInstaller(private val context: Context) {
         // withContext(Dispatchers.IO) would hit the cancellation fast-path
         // and skip the delete entirely.
         withContext(NonCancellable) {
-            if (runCatching { validateDistroName(distroName) }.isFailure) return@withContext
+            if (runCatching { validateDistroName(distro.name) }.isFailure) return@withContext
             try {
-                val dir = getRootfsDir(distroName)
+                val dir = getRootfsDir(distro.name)
                 deleteRootfsSafe(dir)
                 com.redt.util.Format.invalidate(dir)
             } catch (_: Exception) {}
             try {
-                cachedTarballFile(DistroRegistry.alpine).delete()
+                cachedTarballFile(distro).delete()
                 // The .part file is intentionally kept: a fresh attempt
                 // resumes from it instead of restarting the download.
             } catch (_: Exception) {}
             try {
-                File(context.filesDir, "installed/$distroName").delete()
+                File(context.filesDir, "installed/${distro.name}").delete()
             } catch (_: Exception) {}
             notifyDocumentRootsChanged()
         }
+    }
+
+    /** Atomically promotes a finished .part download to its final name. */
+    private fun promotePartial(partial: File, dest: File) {
+        if (partial.renameTo(dest)) return
+        partial.copyTo(dest, overwrite = true)
+        partial.delete()
     }
 
     private suspend fun downloadTarball(
@@ -220,10 +191,7 @@ class DistroInstaller(private val context: Context) {
             if (responseCode == HTTP_RANGE_NOT_SATISFIABLE) {
                 // Server says the partial already covers the whole file:
                 // promote it and let the caller's checksum verify it.
-                if (!partial.renameTo(dest)) {
-                    partial.copyTo(dest, overwrite = true)
-                    partial.delete()
-                }
+                promotePartial(partial, dest)
                 return
             }
             val resuming = responseCode == HttpURLConnection.HTTP_PARTIAL && resumeOffset > 0
@@ -236,30 +204,29 @@ class DistroInstaller(private val context: Context) {
             val total = if (rangeLen > 0) resumeOffset + rangeLen else -1L
             if (total > 0) {
                 // Incoming bytes plus room for the extracted rootfs
-                // (gz decompresses roughly 2:1).
-                requireFreeSpace((total - resumeOffset) + total * 2L, "installing ${dest.name}")
+                // (gz decompresses roughly ROOTFS_EXPANSION_FACTOR:1).
+                requireFreeSpace((total - resumeOffset) + total * ROOTFS_EXPANSION_FACTOR, "installing ${dest.name}")
             }
 
             val buffer = ByteArray(8192)
             FileOutputStream(partial, resuming).use { output ->
                 conn.inputStream.use { input ->
-                    var read: Int
                     var downloaded = resumeOffset
                     var sessionBytes = 0L
                     val startTime = System.currentTimeMillis()
                     var lastEmit = 0L
 
-                    while (input.read(buffer).also { read = it } != -1) {
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read == -1) break
                         checkCancel(gen)
                         output.write(buffer, 0, read)
                         downloaded += read
                         sessionBytes += read
                         val now = System.currentTimeMillis()
-                        if (now - lastEmit < PROGRESS_EMIT_INTERVAL_MS &&
-                            (total <= 0 || downloaded < total)
-                        ) {
-                            continue
-                        }
+                        val finished = total > 0 && downloaded >= total
+                        val throttled = now - lastEmit < PROGRESS_EMIT_INTERVAL_MS && !finished
+                        if (throttled) continue
                         lastEmit = now
                         val elapsed = (now - startTime) / 1000
                         val speed = if (elapsed > 0) {
@@ -274,10 +241,7 @@ class DistroInstaller(private val context: Context) {
                     }
                 }
             }
-            if (!partial.renameTo(dest)) {
-                partial.copyTo(dest, overwrite = true)
-                partial.delete()
-            }
+            promotePartial(partial, dest)
         } finally {
             conn.disconnect()
         }
@@ -287,8 +251,9 @@ class DistroInstaller(private val context: Context) {
         val digest = MessageDigest.getInstance("SHA-256")
         file.inputStream().use { input ->
             val buffer = ByteArray(8192)
-            var read: Int
-            while (input.read(buffer).also { read = it } != -1) {
+            while (true) {
+                val read = input.read(buffer)
+                if (read == -1) break
                 digest.update(buffer, 0, read)
             }
         }
@@ -387,9 +352,6 @@ class DistroInstaller(private val context: Context) {
         }
         val canonicalDest = dest.canonicalFile
 
-        fun isInsideDest(f: File): Boolean =
-            f.path.startsWith(canonicalDest.path + File.separator)
-
         fun stripPrefix(name: String): String =
             if (prefixToStrip.isNotEmpty() && name.startsWith(prefixToStrip)) {
                 name.removePrefix(prefixToStrip)
@@ -404,7 +366,7 @@ class DistroInstaller(private val context: Context) {
             // as "unsafe".
             if (entryName.isEmpty() || entryName == "." || entryName == "./") return
             val target = File(dest, entryName).canonicalFile
-            if (target == canonicalDest || !isInsideDest(target)) {
+            if (target == canonicalDest || !target.isUnder(canonicalDest)) {
                 throw Exception("Unsafe archive entry: ${entry.name}")
             }
             if (entry.isSymbolicLink) {
@@ -419,7 +381,7 @@ class DistroInstaller(private val context: Context) {
                     } else {
                         target.parentFile?.canonicalFile?.resolve(linkTarget)?.canonicalFile
                     }
-                    val isSafe = resolvedTarget != null && isInsideDest(resolvedTarget)
+                    val isSafe = resolvedTarget != null && resolvedTarget.isUnder(canonicalDest)
                     if (!isSafe) {
                         Log.w("DistroInstaller", "Skipping unsafe symlink ${entry.name} -> $linkTarget")
                     } else {
@@ -436,7 +398,7 @@ class DistroInstaller(private val context: Context) {
                 // on filesystems where link(2) fails.
                 val linkTarget = stripPrefix(entry.linkName)
                 val source = if (linkTarget.isEmpty()) null else File(dest, linkTarget).canonicalFile
-                if (source == null || !isInsideDest(source) || !source.isFile) {
+                if (source == null || !source.isUnder(canonicalDest) || !source.isFile) {
                     Log.w("DistroInstaller", "Skipping hard link ${entry.name} -> ${entry.linkName}")
                 } else {
                     target.parentFile?.mkdirs()
@@ -491,12 +453,6 @@ class DistroInstaller(private val context: Context) {
         return count
     }
 
-    private fun isSymbolicLink(f: File): Boolean = try {
-        OsConstants.S_ISLNK(Os.lstat(f.absolutePath).st_mode)
-    } catch (_: Exception) {
-        false
-    }
-
     /**
      * The guest always gets this fixed public DNS pair. Device DNS is never
      * used: it breaks when the network changes and VPN apps (NetGuard,
@@ -528,51 +484,50 @@ class DistroInstaller(private val context: Context) {
         resolv.parentFile?.mkdirs()
         // A symlink (e.g. -> /run/resolvconf/resolv.conf) must be removed
         // first so writeText below cannot follow it out of the rootfs.
-        if (isSymbolicLink(resolv)) resolv.delete()
+        if (FileUtil.isSymlink(resolv)) resolv.delete()
         safeWriteText(resolv, guestDnsServers.joinToString("") { "nameserver $it\n" })
     }
 
     private fun ensureSupplementaryGroups(rootfs: File) {
         val group = File(rootfs, "etc/group")
         group.parentFile?.mkdirs()
-        val existing = if (group.exists()) group.readText() else ""
-        val existingNames = existing.lineSequence()
+        val existingText = if (group.exists()) group.readText() else ""
+        val existingNames = existingText.lineSequence()
             .map { it.trim() }
             .filter { it.isNotEmpty() && !it.startsWith('#') }
             .map { it.substringBefore(':') }
             .toMutableSet()
-        val sb = StringBuilder(existing)
-        var changed = false
-        val baseEntries = listOf(
+
+        val additions = mutableListOf<String>()
+        fun addEntry(line: String) {
+            if (existingNames.add(line.substringBefore(':'))) additions.add(line)
+        }
+
+        listOf(
             "root:x:0:root", "wheel:x:0:root",
             "inet:x:3003:", "everybody:x:9997:"
-        )
-        for (entry in baseEntries) {
-            val name = entry.substringBefore(':')
-            if (existingNames.add(name)) {
-                if (sb.isNotEmpty() && !sb.endsWith('\n')) sb.append('\n')
-                sb.append(entry).append('\n')
-                changed = true
-            }
-        }
-        try {
-            val status = java.io.File("/proc/self/status").readLines()
-            val groupsLine = status.firstOrNull { it.startsWith("Groups:") }
-            if (groupsLine != null) {
-                val gids = groupsLine.removePrefix("Groups:").trim().split("\\s+".toRegex())
-                for (gidStr in gids) {
-                    val gid = gidStr.toIntOrNull() ?: continue
-                    if (gid <= 0) continue
-                    val name = "android_$gid"
-                    if (existingNames.add(name)) {
-                        if (sb.isNotEmpty() && !sb.endsWith('\n')) sb.append('\n')
-                        sb.append("$name:x:$gid:\n")
-                        changed = true
-                    }
-                }
-            }
-        } catch (_: Exception) {}
-        if (changed) safeWriteText(group, sb.toString())
+        ).forEach(::addEntry)
+        selfGroupIds().forEach { gid -> addEntry("android_$gid:x:$gid:") }
+
+        if (additions.isEmpty()) return
+        val sb = StringBuilder(existingText)
+        if (sb.isNotEmpty() && !sb.endsWith('\n')) sb.append('\n')
+        additions.forEach { sb.append(it).append('\n') }
+        safeWriteText(group, sb.toString())
+    }
+
+    /** Supplementary group IDs of this process, from /proc/self/status. */
+    private fun selfGroupIds(): List<Int> = try {
+        java.io.File("/proc/self/status").readLines()
+            .firstOrNull { it.startsWith("Groups:") }
+            ?.removePrefix("Groups:")
+            ?.trim()
+            ?.split("\\s+".toRegex())
+            ?.mapNotNull { it.toIntOrNull() }
+            ?.filter { it > 0 }
+            ?: emptyList()
+    } catch (_: Exception) {
+        emptyList()
     }
 
     private fun ensureWritable(file: File) {
@@ -600,73 +555,81 @@ class DistroInstaller(private val context: Context) {
 
     fun repairRootfs(rootfs: File): String {
         val repairs = mutableListOf<String>()
-        val uid = android.os.Process.myUid()
-
-        if (!File(rootfs, ".perms_fixed").exists()) {
-            fixupDirectoryPermissions(rootfs)
-            try {
-                File(rootfs, ".perms_fixed").writeText("1")
-            } catch (_: Exception) {}
-            repairs.add("Fixed directory permissions")
-        }
-
-        val passwd = File(rootfs, "etc/passwd")
-        if (!passwd.exists() || !passwd.readText().contains(":$uid:")) {
-            passwd.parentFile?.mkdirs()
-            safeAppendText(passwd, "root:x:$uid:0:root:/root:/bin/sh\n")
-            repairs.add("Added passwd entry for uid $uid")
-        }
+        repairs += repairDirectoryPermissionsOnce(rootfs)
+        repairs += repairPasswdEntry(rootfs)
         ensureSupplementaryGroups(rootfs)
-        val hosts = File(rootfs, "etc/hosts")
-        if (!hosts.exists() || !hosts.readText().contains("127.0.0.1")) {
-            hosts.parentFile?.mkdirs()
-            safeWriteText(hosts, "127.0.0.1 localhost\n::1 localhost\n")
-            repairs.add("Created /etc/hosts")
-        }
-
-        File(rootfs, "root").mkdirs()
-        repairs.add("Created /root")
-
-        val busybox = File(rootfs, "bin/busybox")
-        if (busybox.exists()) {
-            if (!busybox.canExecute()) {
-                busybox.setExecutable(true, false)
-                repairs.add("Made bin/busybox executable")
-            }
-            val sh = File(rootfs, "bin/sh")
-            if (!sh.exists() || !sh.canExecute()) {
-                sh.delete()
-                try {
-                    android.system.Os.symlink("busybox", sh.absolutePath)
-                } catch (_: Exception) {
-                    busybox.copyTo(sh, overwrite = true)
-                    sh.setExecutable(true, false)
-                    repairs.add("Copied bin/busybox -> bin/sh")
-                }
-                if (sh.canExecute()) {
-                    repairs.add("bin/sh is now executable")
-                } else {
-                    repairs.add("WARN: bin/sh still not executable")
-                }
-            }
-        } else {
-            repairs.add("WARN: bin/busybox not found in rootfs")
-            val binDir = File(rootfs, "bin")
-            if (binDir.exists()) {
-                val contents = binDir.list()?.joinToString(", ") ?: "empty"
-                repairs.add("bin/ contents: $contents")
-            } else {
-                repairs.add("bin/ directory missing!")
-            }
-        }
-
-        val resolv = File(rootfs, "etc/resolv.conf")
-        if (needsResolvRewrite(resolv)) {
+        repairs += repairHosts(rootfs)
+        val rootDir = File(rootfs, "root")
+        if (!rootDir.exists() && rootDir.mkdirs()) repairs.add("Created /root")
+        repairs += repairShell(rootfs)
+        if (needsResolvRewrite(File(rootfs, "etc/resolv.conf"))) {
             writeResolvConf(rootfs)
             repairs.add("Created etc/resolv.conf")
         }
-
         return repairs.joinToString("\n")
+    }
+
+    private fun repairDirectoryPermissionsOnce(rootfs: File): List<String> {
+        if (File(rootfs, ".perms_fixed").exists()) return emptyList()
+        fixupDirectoryPermissions(rootfs)
+        try {
+            File(rootfs, ".perms_fixed").writeText("1")
+        } catch (_: Exception) {}
+        return listOf("Fixed directory permissions")
+    }
+
+    private fun repairPasswdEntry(rootfs: File): List<String> {
+        val uid = android.os.Process.myUid()
+        val passwd = File(rootfs, "etc/passwd")
+        if (passwd.exists() && passwd.readText().contains(":$uid:")) return emptyList()
+        passwd.parentFile?.mkdirs()
+        safeAppendText(passwd, "root:x:$uid:0:root:/root:/bin/sh\n")
+        return listOf("Added passwd entry for uid $uid")
+    }
+
+    private fun repairHosts(rootfs: File): List<String> {
+        val hosts = File(rootfs, "etc/hosts")
+        if (hosts.exists() && hosts.readText().contains("127.0.0.1")) return emptyList()
+        hosts.parentFile?.mkdirs()
+        safeWriteText(hosts, "127.0.0.1 localhost\n::1 localhost\n")
+        return listOf("Created /etc/hosts")
+    }
+
+    /** Makes bin/sh usable, preferring a busybox symlink over a copy. */
+    private fun repairShell(rootfs: File): List<String> {
+        val repairs = mutableListOf<String>()
+        val busybox = File(rootfs, "bin/busybox")
+        if (!busybox.exists()) {
+            repairs.add("WARN: bin/busybox not found in rootfs")
+            val binDir = File(rootfs, "bin")
+            repairs.add(
+                if (binDir.exists()) {
+                    "bin/ contents: ${binDir.list()?.joinToString(", ") ?: "empty"}"
+                } else {
+                    "bin/ directory missing!"
+                }
+            )
+            return repairs
+        }
+        if (!busybox.canExecute()) {
+            busybox.setExecutable(true, false)
+            repairs.add("Made bin/busybox executable")
+        }
+        val sh = File(rootfs, "bin/sh")
+        if (sh.exists() && sh.canExecute()) return repairs
+        sh.delete()
+        try {
+            android.system.Os.symlink("busybox", sh.absolutePath)
+        } catch (_: Exception) {
+            busybox.copyTo(sh, overwrite = true)
+            sh.setExecutable(true, false)
+            repairs.add("Copied bin/busybox -> bin/sh")
+        }
+        repairs.add(
+            if (sh.canExecute()) "bin/sh is now executable"
+            else "WARN: bin/sh still not executable"
+        )
+        return repairs
     }
 
     fun getRootfsDir(distroName: String): File {
@@ -709,7 +672,7 @@ class DistroInstaller(private val context: Context) {
         val partialCutoff = System.currentTimeMillis() - 7 * dayMs
         val rootfsParent = File(context.filesDir, "rootfs").canonicalFile
         rootfsParent.listFiles()?.forEach { dir ->
-            if (dir.isDirectory && !isSymbolicLink(dir) &&
+            if (dir.isDirectory && !FileUtil.isSymlink(dir) &&
                 !File(context.filesDir, "installed/${dir.name}").exists() &&
                 dir.lastModified() < huskCutoff
             ) {
@@ -727,6 +690,12 @@ class DistroInstaller(private val context: Context) {
 
     private companion object {
         const val PROGRESS_EMIT_INTERVAL_MS = 100L
+
+        /**
+         * Room reserved for the extracted rootfs on top of the tarball:
+         * gzip-compressed rootfs archives decompress roughly 2:1.
+         */
+        private const val ROOTFS_EXPANSION_FACTOR = 2L
 
         /**
          * java.net.HttpURLConnection on Android does not define

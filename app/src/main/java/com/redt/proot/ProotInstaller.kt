@@ -9,12 +9,21 @@ import java.util.zip.ZipFile
 object ProotInstaller {
     private const val TAG = "ProotInstaller"
     private const val PROOT_BIN = "proot"
+    private const val PROOT_LIB = "libproot.so"
 
-    private fun zipEntryPath(): String = "lib/arm64-v8a/libproot.so"
+    private fun zipEntryPath(): String = "lib/arm64-v8a/$PROOT_LIB"
 
-    fun getProotPath(context: Context): String? {
-        // 1. nativeLibraryDir (system-extracted jniLibs)
-        val nativePath = "${context.applicationInfo.nativeLibraryDir}/libproot.so"
+    /**
+     * Resolves the proot binary, trying three locations in order:
+     * 1. nativeLibraryDir (system-extracted jniLibs),
+     * 2. an earlier extraction in code_cache,
+     * 3. a fresh extraction from the APK zip into code_cache.
+     */
+    fun getProotPath(context: Context): String? =
+        prootFromNativeLibraryDir(context) ?: prootFromCache(context) ?: extractProotFromApk(context)
+
+    private fun prootFromNativeLibraryDir(context: Context): String? {
+        val nativePath = "${context.applicationInfo.nativeLibraryDir}/$PROOT_LIB"
         val nativeFile = File(nativePath)
         if (nativeFile.canExecute()) {
             Log.i(TAG, "Found proot at nativeLibraryDir: $nativePath")
@@ -24,40 +33,32 @@ object ProotInstaller {
             nativeFile.setExecutable(true, false)
             if (nativeFile.canExecute()) return nativePath
         }
+        return null
+    }
 
-        // 2. Already extracted to code_cache
+    private fun prootFromCache(context: Context): String? {
         val cachePath = "${context.codeCacheDir}/$PROOT_BIN/$PROOT_BIN"
-        val cacheFile = File(cachePath)
-        if (cacheFile.canExecute()) {
-            Log.i(TAG, "Found proot at code_cache: $cachePath")
-            return cachePath
-        }
+        if (!File(cachePath).canExecute()) return null
+        Log.i(TAG, "Found proot at code_cache: $cachePath")
+        return cachePath
+    }
 
-        // 3. Extract from APK zip to code_cache
-        try {
-            val apkPath = context.applicationInfo.sourceDir
-            Log.i(TAG, "Extracting proot from APK: $apkPath [entry=${zipEntryPath()}]")
-            val destDir = File(context.codeCacheDir, PROOT_BIN)
-            destDir.mkdirs()
-
+    private fun extractProotFromApk(context: Context): String? {
+        val apkPath = context.applicationInfo.sourceDir
+        Log.i(TAG, "Extracting proot from APK: $apkPath [entry=${zipEntryPath()}]")
+        val destDir = File(context.codeCacheDir, PROOT_BIN)
+        destDir.mkdirs()
+        val cacheFile = File(destDir, PROOT_BIN)
+        return try {
             ZipFile(apkPath).use { zip ->
                 val entry = zip.getEntry(zipEntryPath())
-                    ?: run {
-                        Log.e(TAG, "Entry not found in APK: ${zipEntryPath()}")
-                        // List available lib entries for debugging
-                        val libEntries = zip.entries().asSequence()
-                            .filter { it.name.startsWith("lib/") && it.name.endsWith(".so") }
-                            .map { it.name }
-                            .toList()
-                        Log.e(TAG, "Available lib entries: $libEntries")
-                        return@getProotPath null
-                    }
-
+                if (entry == null) {
+                    logAvailableLibEntries(zip)
+                    return null
+                }
                 zip.getInputStream(entry).use { input ->
                     val tmpFile = File(destDir, "$PROOT_BIN.tmp")
-                    FileOutputStream(tmpFile).use { output ->
-                        input.copyTo(output)
-                    }
+                    FileOutputStream(tmpFile).use { output -> input.copyTo(output) }
                     tmpFile.setReadable(true, false)
                     tmpFile.setWritable(false)
                     tmpFile.setExecutable(true, false)
@@ -65,26 +66,31 @@ object ProotInstaller {
                     if (tmpFile.renameTo(cacheFile)) {
                         cacheFile.setExecutable(true, false)
                         if (cacheFile.canExecute()) {
-                            Log.i(TAG, "Extracted proot to: $cachePath")
-                            return cachePath
-                        } else {
-                            Log.e(TAG, "Extracted but not executable: $cachePath")
+                            Log.i(TAG, "Extracted proot to: ${cacheFile.absolutePath}")
+                            return cacheFile.absolutePath
                         }
-                    } else {
-                        // rename failed, try using tmp directly
-                        if (tmpFile.canExecute()) {
-                            val altPath = tmpFile.absolutePath
-                            Log.i(TAG, "Using tmp file: $altPath")
-                            return altPath
-                        }
+                        Log.e(TAG, "Extracted but not executable: ${cacheFile.absolutePath}")
+                        return null
                     }
+                    // rename failed, try using the tmp file directly
+                    return if (tmpFile.canExecute()) {
+                        Log.i(TAG, "Using tmp file: ${tmpFile.absolutePath}")
+                        tmpFile.absolutePath
+                    } else null
                 }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to extract proot from APK", e)
+            null
         }
+    }
 
-        return null
+    private fun logAvailableLibEntries(zip: ZipFile) {
+        val libEntries = zip.entries().asSequence()
+            .filter { it.name.startsWith("lib/") && it.name.endsWith(".so") }
+            .map { it.name }
+            .toList()
+        Log.e(TAG, "Available lib entries: $libEntries")
     }
 
     fun isInstalled(context: Context): Boolean {

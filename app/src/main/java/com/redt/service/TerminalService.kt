@@ -14,7 +14,6 @@ import com.redt.R
 import com.redt.distro.DistroRegistry
 import com.redt.RedTApp
 import com.redt.proot.ProotInstaller
-import com.redt.ui.themeColor
 import com.redt.ui.Prefs
 import com.redt.ui.TerminalActivity
 import com.redt.ui.RedTWidgetProvider
@@ -35,24 +34,18 @@ class TerminalService : Service() {
     companion object {
         const val ACTION_ACQUIRE = "com.redt.action.ACQUIRE_WAKELOCK"
         const val ACTION_RELEASE = "com.redt.action.RELEASE_WAKELOCK"
-        const val ACTION_AUTO_WAKE = "com.redt.action.AUTO_WAKE"
-        const val ACTION_AUTO_RELEASE = "com.redt.action.AUTO_RELEASE"
         const val ACTION_EXIT = "com.redt.action.EXIT"
         const val ACTION_CREATE_SESSION = "com.redt.action.CREATE_SESSION"
 
         private fun terminalPendingIntent(context: Context): PendingIntent =
             PendingIntent.getActivity(
                 context, 0,
-                Intent(context, TerminalActivity::class.java).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                },
+                TerminalActivity.launchIntent(context),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
     }
 
     private var wakeLock: PowerManager.WakeLock? = null
-    private var userWakelockHeld = false
-    private var autoWakelockHeld = false
     @Volatile
     private var exiting = false
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -76,10 +69,10 @@ class TerminalService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, RedTApp.CHANNEL_TERMINAL)
-            .setContentTitle("RedT - Alpine")
+            .setContentTitle("RedT - ${DistroRegistry.alpine.name.replaceFirstChar { it.uppercase() }}")
             .setContentText("${sessionStore.sessions.value.size} session(s) | Tap to open")
             .setSmallIcon(com.redt.R.drawable.ic_notification)
-            .setColor(themeAccent())
+            .setColor(themeAccentColor())
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setAutoCancel(false)
@@ -93,25 +86,10 @@ class TerminalService : Service() {
             startForeground(RedTApp.NOTIF_ID_TERMINAL, buildNotification())
         }
         when (intent?.action) {
-            ACTION_ACQUIRE -> {
-                userWakelockHeld = true
-                prefs().edit().putBoolean(Prefs.KEY_WAKELOCK, true).apply()
+            ACTION_ACQUIRE, ACTION_RELEASE -> {
+                prefs().edit().putBoolean(Prefs.KEY_WAKELOCK, intent?.action == ACTION_ACQUIRE).apply()
                 updateWakeLock()
                 stopIfIdle()
-            }
-            ACTION_RELEASE -> {
-                userWakelockHeld = false
-                prefs().edit().putBoolean(Prefs.KEY_WAKELOCK, false).apply()
-                updateWakeLock()
-                stopIfIdle()
-            }
-            ACTION_AUTO_WAKE -> {
-                autoWakelockHeld = true
-                updateWakeLock()
-            }
-            ACTION_AUTO_RELEASE -> {
-                autoWakelockHeld = false
-                updateWakeLock()
             }
             ACTION_CREATE_SESSION -> {
                 createSession()
@@ -128,8 +106,6 @@ class TerminalService : Service() {
                 stopSelf()
             }
             else -> {
-                val prefs = prefs()
-                userWakelockHeld = prefs.getBoolean(Prefs.KEY_WAKELOCK, true)
                 updateWakeLock()
                 if (sessionStore.sessions.value.isEmpty()) {
                     stopForeground(STOP_FOREGROUND_REMOVE)
@@ -232,14 +208,16 @@ class TerminalService : Service() {
             launchScripts.values.forEach { it.delete() }
             launchScripts.clear()
         }
-        filesDir.listFiles { _, name -> name.startsWith("launch_") && name.endsWith(".sh") }
-            ?.forEach { it.delete() }
+        launchScriptFiles()?.forEach { it.delete() }
     }
 
-    private fun sweepStaleLaunchScripts() {
+    private fun launchScriptFiles(): Array<File>? =
         filesDir.listFiles { _, name -> name.startsWith("launch_") && name.endsWith(".sh") }
-            ?.forEach { it.delete() }
+
+    private fun sweepStaleLaunchScripts() {
+        launchScriptFiles()?.forEach { it.delete() }
     }
+
 
     private fun updateNotification() {
         getSystemService(NotificationManager::class.java)
@@ -254,13 +232,13 @@ class TerminalService : Service() {
     }
 
     private fun updateWakeLock() {
-        // The user pref is the master switch: with wakelock disabled, neither
-        // the manual toggle nor the background auto-wakelock may hold one.
-        val enabled = prefs().getBoolean(Prefs.KEY_WAKELOCK, Prefs.WAKELOCK_DEFAULT)
-        val shouldHold = enabled && (userWakelockHeld || autoWakelockHeld)
-        if (shouldHold && wakeLock?.isHeld != true) {
+        // The user pref is the single source of truth: when it is off no
+        // wake lock may be held; when it is on the service keeps the CPU
+        // alive so background sessions keep running.
+        val shouldHold = prefs().getBoolean(Prefs.KEY_WAKELOCK, Prefs.WAKELOCK_DEFAULT)
+        if (shouldHold) {
             acquireWakeLock()
-        } else if (!shouldHold && wakeLock?.isHeld == true) {
+        } else {
             releaseWakeLock()
         }
     }
@@ -283,5 +261,5 @@ class TerminalService : Service() {
         wakeLock = null
     }
 
-    private fun themeAccent(): Int = themeColor(R.attr.themeAccent, 0xFF89B4FA.toInt())
+
 }
