@@ -383,7 +383,7 @@ class TerminalActivity : AppCompatActivity() {
     private fun performKeyAction(label: String) {
         val spec = specByLabel[label]
         if (spec?.requiresSession != false && session == null) return
-        if (spec != null) spec.action() else session?.write(label)
+        if (spec != null) spec.action(this) else session?.write(label)
         if (spec?.modifier == null) consumeModifiers()
     }
 
