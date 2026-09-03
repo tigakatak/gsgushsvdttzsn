@@ -246,7 +246,6 @@ class TerminalActivity : AppCompatActivity() {
                         showSession(current)
                     }
                     updateDrawer()
-                    RedTWidgetProvider.updateAll(this@TerminalActivity)
                 }
             }
         }
@@ -842,7 +841,6 @@ class TerminalActivity : AppCompatActivity() {
         syncWakeLock()
         updateModifierButtons()
         updateExtraKeysVisibility()
-        RedTWidgetProvider.updateAll(this)
     }
 
     override fun onPause() {
@@ -854,7 +852,6 @@ class TerminalActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        RedTWidgetProvider.updateAll(this)
         if (installJob?.isActive == true) {
             installer.cancel()
             installJob?.cancel()

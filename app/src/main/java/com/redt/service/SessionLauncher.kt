@@ -136,30 +136,18 @@ exec "$prootBin" -0 -L -r "$rootfsPath" -w /root --link2symlink --sysvipc --ashm
      * .bashrc; bash only exists once .startup has installed it, and sh never
      * reads .bashrc anyway. RedT's customizations therefore live directly in
      * .bashrc inside a marked block that is refreshed in place on upgrade.
-     * Anything outside the block (user edits) is preserved, and rootfs' from
-     * the old indirect scheme (source line + ~/.redt_bashrc) are migrated.
+     * Anything outside the block (user edits) is preserved.
      */
     private fun writeBashrc(rootDir: File) {
-        File(rootDir, ".redt_bashrc").delete()
-
         val bashrc = File(rootDir, ".bashrc")
         val existing = runCatching { bashrc.readText() }.getOrDefault("")
-        val withoutLegacy = if (existing.contains(LEGACY_SOURCE_LINE)) {
-            existing.lines().filterNot { line ->
-                val t = line.trim()
-                t == LEGACY_SOURCE_LINE || t == "# RedT additions"
-            }.joinToString("\n")
-        } else {
-            existing
-        }
-
         val block = managedBashrcBlock()
-        val begin = withoutLegacy.indexOf(BASHRC_BEGIN)
-        val end = if (begin >= 0) withoutLegacy.indexOf(BASHRC_END, begin) else -1
+        val begin = existing.indexOf(BASHRC_BEGIN)
+        val end = if (begin >= 0) existing.indexOf(BASHRC_END, begin) else -1
         val merged = if (begin >= 0 && end >= 0) {
-            withoutLegacy.substring(0, begin) + block + withoutLegacy.substring(end + BASHRC_END.length)
+            existing.substring(0, begin) + block + existing.substring(end + BASHRC_END.length)
         } else {
-            appendBashrcBlock(withoutLegacy, block)
+            appendBashrcBlock(existing, block)
         }
         if (merged != existing) bashrc.writeText(merged)
     }
@@ -220,6 +208,5 @@ $BASHRC_END"""
     private companion object {
         const val BASHRC_BEGIN = "# >>> redt >>>"
         const val BASHRC_END = "# <<< redt <<<"
-        const val LEGACY_SOURCE_LINE = "[ -r ~/.redt_bashrc ] && . ~/.redt_bashrc"
     }
 }

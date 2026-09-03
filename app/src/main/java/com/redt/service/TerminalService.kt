@@ -16,7 +16,6 @@ import com.redt.RedTApp
 import com.redt.proot.ProotInstaller
 import com.redt.ui.Prefs
 import com.redt.ui.TerminalActivity
-import com.redt.ui.RedTWidgetProvider
 import com.redt.ui.prefs
 import com.redt.ui.themeAccentColor
 import com.redt.session.terminalSessionStore
@@ -101,9 +100,6 @@ class TerminalService : Service() {
                 exiting = true
                 sessionStore.signalExit()
                 finishAllSessions()
-                // The widget shows a live session count; refresh it before
-                // stopping, otherwise it keeps a stale "Tap to resume".
-                RedTWidgetProvider.updateAll(this)
                 releaseWakeLock()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
@@ -170,7 +166,6 @@ class TerminalService : Service() {
                 sessionStore.addSession(session, bridge)
                 sessionStore.switchToSession(session)
                 updateNotification()
-                RedTWidgetProvider.updateAll(this@TerminalService)
             } catch (e: Exception) {
                 launchScript?.delete()
                 Log.e("TerminalService", "Failed to launch Alpine", e)
@@ -192,7 +187,6 @@ class TerminalService : Service() {
         }?.delete()
         serviceScope.launch {
             sessionStore.sessionFinished(session)
-            RedTWidgetProvider.updateAll(this@TerminalService)
             if (sessionStore.sessions.isEmpty()) {
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
