@@ -10,7 +10,7 @@
         android:scaleX="2.7"
         android:scaleY="2.7">
         <path
-            android:fillColor="#000000"
+            android:fillColor="#FFFFFFFF"
             android:pathData="M4,4 L11,12 L4,20 L6.5,20 L13.5,12 L6.5,4 Z M13,18 H20 V20 H13 Z" />
     </group>
 </vector>

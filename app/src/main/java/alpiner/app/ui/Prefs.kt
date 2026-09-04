@@ -1,0 +1,48 @@
+package alpiner.app.ui
+
+import android.content.Context
+import android.content.SharedPreferences
+import android.widget.SeekBar
+
+object Prefs {
+    const val NAME = "settings"
+    const val KEY_FONT_SIZE = "font_size"
+    const val KEY_SCROLLBACK = "scrollback"
+    const val KEY_AUTOHIDE_KEYS = "autohide_keys"
+    const val KEY_WAKELOCK = "wakelock"
+    const val KEY_EXTRA_KEYS_ROW1 = "extra_keys_row1"
+    const val KEY_EXTRA_KEYS_ROW2 = "extra_keys_row2"
+    const val KEY_STORAGE_ASK_TIME = "storage_ask_time"
+
+    const val SCROLLBACK_DEFAULT = 4
+    const val FONT_SIZE_DEFAULT = 20
+    const val FONT_SIZE_MIN = 8
+    const val FONT_SIZE_MAX = 40
+    const val PERMISSION_ASK_THROTTLE_MS = 8000L
+    const val KEY_REPEAT_INITIAL_DELAY = 400L
+    const val KEY_REPEAT_DELAY = 80L
+    const val SESSION_ID_LENGTH = 16
+    const val UV_THREADPOOL_SIZE = 16
+    const val ULIMIT_NOFILE = 65536
+    const val ULIMIT_NPROC = 65536
+    const val WAKELOCK_DEFAULT = true
+    // The em-dash key writes a literal "-" to the terminal; intentional.
+    const val EXTRA_KEYS_ROW1_DEFAULT = "\u2630 ALT ESC \u25B2 \u2014 /"
+    const val EXTRA_KEYS_ROW2_DEFAULT = "TAB SHIFT \u25C0 \u25BC \u25B6 CTRL"
+
+    val SCROLLBACK_ROWS = intArrayOf(500, 1000, 2000, 3000, 5000, 7500, 10000, 15000, 20000, 30000)
+
+    const val CONNECT_TIMEOUT_MS = 30000
+    const val READ_TIMEOUT_MS = 120000
+}
+
+fun Context.prefs(): SharedPreferences = getSharedPreferences(Prefs.NAME, Context.MODE_PRIVATE)
+
+fun simpleSeekBarListener(onProgress: (Int) -> Unit): SeekBar.OnSeekBarChangeListener =
+    object : SeekBar.OnSeekBarChangeListener {
+        override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+            onProgress(progress)
+        }
+        override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+        override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+    }

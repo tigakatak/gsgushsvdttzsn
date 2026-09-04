@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.redt"
+    namespace = "alpiner.app"
     compileSdk = 36
 
     buildFeatures {
@@ -14,7 +14,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.redt"
+        applicationId = "alpiner.app"
         minSdk = 30
         targetSdk = 35
         versionCode = 3

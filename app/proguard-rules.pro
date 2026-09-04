@@ -1,5 +1,5 @@
 -keep class org.apache.commons.compress.** { *; }
--keep class com.redt.util.CrashHandler { *; }
+-keep class alpiner.app.util.CrashHandler { *; }
 -dontwarn com.github.luben.zstd.**
 -dontwarn org.brotli.dec.**
 -dontwarn org.objectweb.asm.**

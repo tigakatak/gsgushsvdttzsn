@@ -33,5 +33,5 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RedT-unsigned
+          name: Alpiner-unsigned
           path: app/build/outputs/apk/release/*.apk

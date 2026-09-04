@@ -15,6 +15,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "RedTApp"
+rootProject.name = "Alpiner"
 include(":app")
 include(":core:terminal-view")

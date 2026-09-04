@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.RedTApp" parent="Theme.Material3.DayNight.NoActionBar">
+    <style name="Theme.AlpinerApp" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="colorPrimary">@color/primary</item>
         <item name="themeAccent">@color/primary</item>
         <item name="colorOnPrimary">@color/black</item>

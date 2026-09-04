@@ -57,28 +57,6 @@
                         android:textColor="?attr/terminalText"
                         android:textSize="13sp"
                         android:textStyle="bold" />
-
-                    <TextView
-                        android:id="@+id/distro_size_label"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:layout_marginStart="8dp"
-                        android:gravity="end"
-                        android:text=""
-                        android:textColor="?attr/terminalText"
-                        android:textSize="10sp"
-                        android:alpha="0.5" />
-
-                    <TextView
-                        android:id="@+id/session_count"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="0"
-                        android:textColor="?attr/colorPrimary"
-                        android:textSize="12sp"
-                        android:alpha="0.7" />
-
                 </LinearLayout>
 
                 <ScrollView
