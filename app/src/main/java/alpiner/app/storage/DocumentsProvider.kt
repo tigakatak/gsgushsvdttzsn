@@ -1,5 +1,6 @@
 package alpiner.app.storage
 
+import android.content.Context
 import android.database.Cursor
 import android.database.MatrixCursor
 import android.os.CancellationSignal
@@ -10,6 +11,7 @@ import android.provider.DocumentsContract
 import android.webkit.MimeTypeMap
 import alpiner.app.R
 import alpiner.app.distro.AlpineRegistry
+import alpiner.app.distro.DistroPaths
 import alpiner.app.util.FileUtil
 import alpiner.app.util.isUnder
 import java.io.File
@@ -20,7 +22,7 @@ import java.io.IOException
 class DocumentsProvider : android.provider.DocumentsProvider() {
 
     companion object {
-        private const val ROOT_ID = "redt"
+        private const val ROOT_ID = "alpiner"
         private const val ROOT_DOCUMENT_ID = "root"
         private const val DOCUMENT_PREFIX = "$ROOT_DOCUMENT_ID/"
 
@@ -43,6 +45,19 @@ class DocumentsProvider : android.provider.DocumentsProvider() {
             DocumentsContract.Document.COLUMN_FLAGS,
             DocumentsContract.Document.COLUMN_SIZE,
         )
+
+        /** Notifies SAF clients that the root list or its children changed (install, cleanup). */
+        fun notifyRootsChanged(context: Context) {
+            val authority = "${context.packageName}.documents"
+            context.contentResolver.notifyChange(
+                DocumentsContract.buildRootsUri(authority),
+                null,
+            )
+            context.contentResolver.notifyChange(
+                DocumentsContract.buildChildDocumentsUri(authority, ROOT_DOCUMENT_ID),
+                null,
+            )
+        }
     }
 
     private val appContext
@@ -53,7 +68,7 @@ class DocumentsProvider : android.provider.DocumentsProvider() {
 
     /** Never pre-created: TerminalActivity treats this directory's absence as "not installed". */
     private val alpineRoot
-        get() = File(File(appContext.filesDir, "rootfs"), AlpineRegistry.alpine.name)
+        get() = File(DistroPaths.rootfsParent(appContext), AlpineRegistry.alpine.name)
 
     override fun onCreate(): Boolean = true
 

@@ -42,10 +42,9 @@ class ModifierState {
 
     fun any(): Boolean = active.isNotEmpty()
 
-    /** Toggles [modifier]; returns its new state. */
-    fun toggle(modifier: TerminalModifier): Boolean {
+    /** Toggles [modifier]. */
+    fun toggle(modifier: TerminalModifier) {
         if (!active.add(modifier)) active.remove(modifier)
-        return modifier in active
     }
 
     fun clear() = active.clear()

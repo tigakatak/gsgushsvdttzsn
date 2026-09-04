@@ -112,14 +112,12 @@ internal class SessionStore {
         }
     }
 
-    fun switchToSession(session: TerminalSession): Boolean {
+    fun switchToSession(session: TerminalSession) {
         synchronized(this) {
             val idx = _state.value.sessions.indexOf(session)
             if (idx >= 0) {
                 _state.value = _state.value.copy(currentIndex = idx)
-                return true
             }
-            return false
         }
     }
 

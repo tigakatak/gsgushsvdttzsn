@@ -1,14 +1,26 @@
 package alpiner.app.ui
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.res.ColorStateList
+import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
 import android.view.ContextMenu
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.MenuItem
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageView
@@ -17,8 +29,12 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.content.res.AppCompatResources
 import androidx.core.content.ContextCompat
+import androidx.core.view.GravityCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.drawerlayout.widget.DrawerLayout
@@ -33,9 +49,12 @@ import alpiner.app.proot.ProotInstaller
 import alpiner.app.session.sessionStore
 import alpiner.app.service.TerminalService
 import alpiner.app.util.Clipboard
+import alpiner.app.util.StoragePermission
+import com.google.android.material.card.MaterialCardView
 import com.termux.terminal.TerminalSession
 import com.termux.terminal.TextStyle
 import com.termux.view.TerminalView
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -45,14 +64,13 @@ import java.io.File
 class TerminalActivity : AppCompatActivity() {
 
     private val distro = AlpineRegistry.alpine
-    private val distroName = distro.name
     private lateinit var terminalView: TerminalView
     private lateinit var drawerLayout: DrawerLayout
     private lateinit var sessionListContainer: LinearLayout
     private lateinit var extraKeysWrapper: LinearLayout
     private lateinit var extraKeysPager: ViewPager2
     private var rootContainer: LinearLayout? = null
-    private var terminalBgLayer: android.view.View? = null
+    private var terminalBgLayer: View? = null
     private var row1Container: LinearLayout? = null
     private var row2Container: LinearLayout? = null
     private var inputField: EditText? = null
@@ -87,7 +105,7 @@ class TerminalActivity : AppCompatActivity() {
 
 
     private val requestNotificationPermission =
-        registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (!granted) toast("Notifications will be suppressed; the terminal service will still run")
         }
 
@@ -103,16 +121,15 @@ class TerminalActivity : AppCompatActivity() {
         setContentView(R.layout.activity_terminal)
         setupImeVisibilityListener()
 
-        if (!alpiner.app.util.StoragePermission.isAccessible()) {
+        if (!StoragePermission.isAccessible()) {
             toast("Alpiner needs All files access to use /storage/emulated/0 in the terminal")
-            alpiner.app.util.StoragePermission.requestAccess(this)
+            StoragePermission.requestAccess(this)
         }
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
-            androidx.core.content.ContextCompat.checkSelfPermission(
-                this, android.Manifest.permission.POST_NOTIFICATIONS
-            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
         ) {
-            requestNotificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         // Clean up disk usage not owned by any visible feature: rootfs husks
         // from interrupted installs and stale download files.
@@ -143,7 +160,7 @@ class TerminalActivity : AppCompatActivity() {
 
         drawerLayout.setDrawerLockMode(
             DrawerLayout.LOCK_MODE_LOCKED_CLOSED,
-            androidx.core.view.GravityCompat.START
+            GravityCompat.START
         )
         val closeDrawerOnBack = object : OnBackPressedCallback(false) {
             override fun handleOnBackPressed() { hideSessionsPanel() }
@@ -159,7 +176,7 @@ class TerminalActivity : AppCompatActivity() {
         val prefs = prefs()
 
         if (prefs.getBoolean(Prefs.KEY_WAKELOCK, Prefs.WAKELOCK_DEFAULT)) {
-            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
         if (prefs.getBoolean(Prefs.KEY_AUTOHIDE_KEYS, false)) {
             toggleExtraKeys(false)
@@ -240,7 +257,7 @@ class TerminalActivity : AppCompatActivity() {
         specByLabel[label]?.repeatable == true
 
     /** Shared handler for every repeatable extra key button. */
-    private val keyRepeatHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val keyRepeatHandler = Handler(Looper.getMainLooper())
 
     private fun createKeyButton(label: String, action: () -> Unit): Button {
         val textColor = terminalTextColor()
@@ -270,9 +287,9 @@ class TerminalActivity : AppCompatActivity() {
             ).apply { weight = 1f; setMargins(2, 4, 2, 4); gravity = Gravity.CENTER }
             setOnTouchListener { v, event ->
                 when (event.action) {
-                    android.view.MotionEvent.ACTION_DOWN -> {
+                    MotionEvent.ACTION_DOWN -> {
                         setBackgroundColor(modifierHighlightColor())
-                        v.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
+                        v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                         if (repeatable) {
                             action()
                             keyRepeatHandler.postDelayed(repeatRunnable, initialDelay)
@@ -281,8 +298,8 @@ class TerminalActivity : AppCompatActivity() {
                             false
                         }
                     }
-                    android.view.MotionEvent.ACTION_UP,
-                    android.view.MotionEvent.ACTION_CANCEL -> {
+                    MotionEvent.ACTION_UP,
+                    MotionEvent.ACTION_CANCEL -> {
                         setBackgroundColor(0)
                         keyRepeatHandler.removeCallbacks(repeatRunnable)
                         repeatable
@@ -395,14 +412,21 @@ class TerminalActivity : AppCompatActivity() {
     }
 
     private fun updateModifierButtons() {
+        forEachKeyButton { btn ->
+            val modifier = TerminalModifier.forLabel(btn.text.toString()) ?: return@forEachKeyButton
+            btn.setBackgroundColor(
+                if (modifiers.isActive(modifier)) modifierHighlightColor() else 0
+            )
+        }
+    }
+
+    /** Visits every key button currently mounted in the two extra-keys rows. */
+    private fun forEachKeyButton(action: (Button) -> Unit) {
         for (row in listOf(row1Container, row2Container)) {
             val r = row ?: continue
             for (i in 0 until r.childCount) {
                 val btn = r.getChildAt(i) as? Button ?: continue
-                val modifier = TerminalModifier.forLabel(btn.text.toString()) ?: continue
-                btn.setBackgroundColor(
-                    if (modifiers.isActive(modifier)) modifierHighlightColor() else 0
-                )
+                action(btn)
             }
         }
     }
@@ -422,16 +446,16 @@ class TerminalActivity : AppCompatActivity() {
     }
 
     private fun toggleSessionsPanel() {
-        if (drawerLayout.isDrawerOpen(androidx.core.view.GravityCompat.START)) hideSessionsPanel()
-        else drawerLayout.openDrawer(androidx.core.view.GravityCompat.START)
+        if (drawerLayout.isDrawerOpen(GravityCompat.START)) hideSessionsPanel()
+        else drawerLayout.openDrawer(GravityCompat.START)
     }
 
     private fun hideSessionsPanel() {
-        drawerLayout.closeDrawer(androidx.core.view.GravityCompat.START)
+        drawerLayout.closeDrawer(GravityCompat.START)
     }
 
     private fun toggleExtraKeys(show: Boolean) {
-        extraKeysWrapper.visibility = if (show) android.view.View.VISIBLE else android.view.View.GONE
+        extraKeysWrapper.visibility = if (show) View.VISIBLE else View.GONE
     }
 
     private fun updateExtraKeysVisibility() {
@@ -456,7 +480,7 @@ class TerminalActivity : AppCompatActivity() {
     }
 
     private fun requestNewSession() {
-        if (!installer.getRootfsDir(distroName).exists()) {
+        if (!installer.isInstalled(distro.name)) {
             ensureDistroInstalled()
             return
         }
@@ -470,10 +494,7 @@ class TerminalActivity : AppCompatActivity() {
 
     private fun switchToSession(index: Int) {
         if (index !in sessions.indices || index == currentIndex) return
-        val session = sessions[index]
-        sessionStore.switchToSession(session)
-        showSession(session)
-        updateDrawer()
+        sessionStore.switchToSession(sessions[index])
     }
 
     private fun handleSessionFinished(finishedSession: TerminalSession) {
@@ -497,12 +518,8 @@ class TerminalActivity : AppCompatActivity() {
     private fun closeSession(index: Int) {
         // Closing the last session is allowed: the store becomes empty and
         // observeSessions() closes the app, exactly like typing `exit` in
-        // the shell.
+        // the shell. View updates flow from the state collector.
         sessionStore.removeSession(index)
-        if (currentIndex in sessions.indices) {
-            showSession(sessions[currentIndex])
-        }
-        updateDrawer()
     }
 
     private fun updateDrawer() {
@@ -519,9 +536,9 @@ class TerminalActivity : AppCompatActivity() {
         sessions.indices.forEach { sessionListContainer.addView(buildSessionCard(it)) }
     }
 
-    private fun buildSessionCard(i: Int): com.google.android.material.card.MaterialCardView {
+    private fun buildSessionCard(i: Int): MaterialCardView {
         val bgColor = if (i == currentIndex) extraKeysBgColor() else 0
-        return com.google.android.material.card.MaterialCardView(this).apply {
+        return MaterialCardView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -551,13 +568,13 @@ class TerminalActivity : AppCompatActivity() {
                     isLongClickable = false
                 })
                 val dotSize = dp(12)
-                addView(android.view.View(context).apply {
+                addView(View(context).apply {
                     layoutParams = LinearLayout.LayoutParams(dotSize, dotSize).apply {
                         gravity = Gravity.CENTER
                         setMargins(0, 0, dp(12), 0)
                     }
-                    background = android.graphics.drawable.GradientDrawable().apply {
-                        shape = android.graphics.drawable.GradientDrawable.OVAL
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.OVAL
                         if (i == currentIndex) {
                             setColor(0xFFA6E3A1.toInt())
                         } else {
@@ -569,11 +586,11 @@ class TerminalActivity : AppCompatActivity() {
                 addView(ImageView(context).apply {
                     layoutParams = LinearLayout.LayoutParams(dp(36), dp(36)).apply { gravity = Gravity.CENTER }
                     setImageDrawable(
-                        androidx.appcompat.content.res.AppCompatResources.getDrawable(
+                        AppCompatResources.getDrawable(
                             context, android.R.drawable.ic_menu_close_clear_cancel
                         )
                     )
-                    imageTintList = android.content.res.ColorStateList.valueOf(mutedTextColor())
+                    imageTintList = ColorStateList.valueOf(mutedTextColor())
                     setOnClickListener { closeSession(i) }
                     setPadding(dp(10), dp(10), dp(10), dp(10))
                 })
@@ -583,8 +600,8 @@ class TerminalActivity : AppCompatActivity() {
 
     private fun showRenameSessionDialog(index: Int) {
         val currentLabel = sessions[index].mSessionName
-        val input = android.widget.EditText(this).apply { setText(currentLabel) }
-        androidx.appcompat.app.AlertDialog.Builder(this)
+        val input = EditText(this).apply { setText(currentLabel) }
+        AlertDialog.Builder(this)
             .setTitle("Rename session")
             .setView(input)
             .setPositiveButton("Rename") { _, _ ->
@@ -610,36 +627,31 @@ class TerminalActivity : AppCompatActivity() {
             toast("Export failed: nothing to export", Toast.LENGTH_SHORT)
             return
         }
-        val distro = distroName
+        val name = distro.name
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 var dir = File(
-                    android.os.Environment.getExternalStorageDirectory(), "Alpiner/exports"
+                    Environment.getExternalStorageDirectory(), "Alpiner/exports"
                 )
                 dir.mkdirs()
                 if (!dir.exists()) dir = File(filesDir, "exports").apply { mkdirs() }
-                val f = File(dir, "$distro-${System.currentTimeMillis()}.txt")
+                val f = File(dir, "$name-${System.currentTimeMillis()}.txt")
                 f.writeText(snapshot)
                 withContext(Dispatchers.Main) {
-                    toastIfAlive("Exported: ${f.absolutePath}")
+                    toast("Exported: ${f.absolutePath}", onlyIfAlive = true)
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    toastIfAlive("Export failed: ${e.message}")
+                    toast("Export failed: ${e.message}", onlyIfAlive = true)
                 }
             }
         }
     }
 
-    private fun toast(message: String, duration: Int = Toast.LENGTH_LONG) {
+    /** Shows a toast; pass [onlyIfAlive] from background coroutines to skip dead activities. */
+    private fun toast(message: String, duration: Int = Toast.LENGTH_LONG, onlyIfAlive: Boolean = false) {
+        if (onlyIfAlive && (isFinishing || isDestroyed)) return
         Toast.makeText(this, message, duration).show()
-    }
-
-    /** Toast from a background coroutine, skipping dead activities. */
-    private fun toastIfAlive(message: String, duration: Int = Toast.LENGTH_LONG) {
-        if (!isFinishing && !isDestroyed) {
-            Toast.makeText(this, message, duration).show()
-        }
     }
 
     private fun copySelectedText() {
@@ -689,7 +701,7 @@ class TerminalActivity : AppCompatActivity() {
                 clearInstallOverlay()
                 toast("${distro.displayName} installed", Toast.LENGTH_SHORT)
                 requestNewSession()
-            } catch (e: kotlinx.coroutines.CancellationException) {
+            } catch (e: CancellationException) {
                 throw e
             } catch (e: AlpineInstaller.CancelledException) {
                 showInstallFailed("Installation cancelled")
@@ -701,7 +713,7 @@ class TerminalActivity : AppCompatActivity() {
 
     private fun showInstallOverlay(displayName: String) {
         clearInstallOverlay()
-        terminalView.visibility = android.view.View.GONE
+        terminalView.visibility = View.GONE
         val parent = terminalView.parent as? ViewGroup ?: return
         val textColor = terminalTextColor()
         val status = TextView(this).apply {
@@ -749,14 +761,14 @@ class TerminalActivity : AppCompatActivity() {
         installOverlay = null
         installProgressBar = null
         installStatusText = null
-        terminalView.visibility = android.view.View.VISIBLE
+        terminalView.visibility = View.VISIBLE
     }
 
     private fun showInstallFailed(message: String) {
         val status = installStatusText ?: return
         status.text = "Install failed:\n$message"
         status.setTextColor(0xFFFF6B6B.toInt())
-        installProgressBar?.visibility = android.view.View.GONE
+        installProgressBar?.visibility = View.GONE
         val overlay = installOverlay ?: return
         if (overlay.getChildAt(overlay.childCount - 1) !is Button) {
             overlay.addView(Button(this).apply {
@@ -771,19 +783,19 @@ class TerminalActivity : AppCompatActivity() {
         try {
             ContextCompat.startForegroundService(this, Intent(this, TerminalService::class.java))
         } catch (e: Exception) {
-            android.util.Log.e("TerminalActivity", "Foreground service failed", e)
+            Log.e("TerminalActivity", "Foreground service failed", e)
         }
     }
 
     override fun onResume() {
         super.onResume()
         syncExtraKeysRows()
-        if (!alpiner.app.util.StoragePermission.isAccessible()) {
+        if (!StoragePermission.isAccessible()) {
             val prefs = prefs()
             val lastAsk = prefs.getLong(Prefs.KEY_STORAGE_ASK_TIME, 0L)
             if (System.currentTimeMillis() - lastAsk > Prefs.PERMISSION_ASK_THROTTLE_MS) {
                 prefs.edit().putLong(Prefs.KEY_STORAGE_ASK_TIME, System.currentTimeMillis()).apply()
-                alpiner.app.util.StoragePermission.requestAccess(this)
+                StoragePermission.requestAccess(this)
             }
         }
         terminalView.requestFocus()
@@ -810,12 +822,12 @@ class TerminalActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
-    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         // Heuristic top-edge band: taps this close to the window's top (and
         // the physical screen's) can follow a system-UI gesture that changed
         // IME state, so in auto-hide mode re-evaluate extra-keys visibility
         // before the tap lands.
-        if (ev.action == android.view.MotionEvent.ACTION_DOWN &&
+        if (ev.action == MotionEvent.ACTION_DOWN &&
             ev.y < dp(40) && ev.rawY < dp(120) &&
             prefs().getBoolean(Prefs.KEY_AUTOHIDE_KEYS, false)
         ) {
@@ -825,7 +837,7 @@ class TerminalActivity : AppCompatActivity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (currentFocus is android.widget.EditText) return super.dispatchKeyEvent(event)
+        if (currentFocus is EditText) return super.dispatchKeyEvent(event)
         if (currentIndex !in sessions.indices) return super.dispatchKeyEvent(event)
         val hadModifier = modifiers.any()
         @Suppress("DEPRECATION")
@@ -874,10 +886,7 @@ class TerminalActivity : AppCompatActivity() {
         extraKeysWrapper.setBackgroundColor(extraBg)
         terminalBgLayer?.setBackgroundColor(bg)
         rootContainer?.setBackgroundColor(bg)
-        for (row in listOf(row1Container, row2Container)) {
-            val r = row ?: continue
-            for (i in 0 until r.childCount) (r.getChildAt(i) as? android.widget.TextView)?.setTextColor(textColor)
-        }
+        forEachKeyButton { it.setTextColor(textColor) }
         inputField?.apply {
             setTextColor(textColor)
             setHintTextColor(hintColor())
@@ -897,7 +906,7 @@ class TerminalActivity : AppCompatActivity() {
 
 
     private fun syncWakeLock() {
-        val keepScreenOn = android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        val keepScreenOn = WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
         if (prefs().getBoolean(Prefs.KEY_WAKELOCK, Prefs.WAKELOCK_DEFAULT)) window.addFlags(keepScreenOn)
         else window.clearFlags(keepScreenOn)
     }

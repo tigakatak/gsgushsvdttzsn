@@ -35,7 +35,7 @@ object FileUtil {
      * visited canonical paths are tracked so a pathological link/hardlink
      * cycle cannot loop forever.
      */
-    fun walkTreeWithoutFollowingLinks(root: File, visit: (File) -> Unit) {
+    private fun walkTreeWithoutFollowingLinks(root: File, visit: (File) -> Unit) {
         val visited = mutableSetOf<String>()
         fun visitNode(f: File) {
             val canonical = try {

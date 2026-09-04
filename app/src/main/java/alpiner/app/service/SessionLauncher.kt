@@ -206,7 +206,7 @@ alias mv='mv -i'
 $BASHRC_END"""
 
     private companion object {
-        const val BASHRC_BEGIN = "# >>> redt >>>"
-        const val BASHRC_END = "# <<< redt <<<"
+        const val BASHRC_BEGIN = "# >>> alpiner >>>"
+        const val BASHRC_END = "# <<< alpiner <<<"
     }
 }

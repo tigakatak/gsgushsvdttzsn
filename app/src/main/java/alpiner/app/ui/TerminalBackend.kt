@@ -100,27 +100,26 @@ class TerminalBackend(
     override fun isTerminalViewSelected(): Boolean = true
     override fun copyModeChanged(copyMode: Boolean) {}
 
+    /** Escape sequences for hardware F1-F12 keys. */
+    private val fnKeySequences = mapOf(
+        KeyEvent.KEYCODE_F1 to "\u001bOP",
+        KeyEvent.KEYCODE_F2 to "\u001bOQ",
+        KeyEvent.KEYCODE_F3 to "\u001bOR",
+        KeyEvent.KEYCODE_F4 to "\u001bOS",
+        KeyEvent.KEYCODE_F5 to "\u001b[15~",
+        KeyEvent.KEYCODE_F6 to "\u001b[17~",
+        KeyEvent.KEYCODE_F7 to "\u001b[18~",
+        KeyEvent.KEYCODE_F8 to "\u001b[19~",
+        KeyEvent.KEYCODE_F9 to "\u001b[20~",
+        KeyEvent.KEYCODE_F10 to "\u001b[21~",
+        KeyEvent.KEYCODE_F11 to "\u001b[23~",
+        KeyEvent.KEYCODE_F12 to "\u001b[24~",
+    )
+
     override fun onKeyDown(keyCode: Int, e: KeyEvent, session: TerminalSession): Boolean {
-        val fKeySequence = when (keyCode) {
-            KeyEvent.KEYCODE_F1 -> "\u001bOP"
-            KeyEvent.KEYCODE_F2 -> "\u001bOQ"
-            KeyEvent.KEYCODE_F3 -> "\u001bOR"
-            KeyEvent.KEYCODE_F4 -> "\u001bOS"
-            KeyEvent.KEYCODE_F5 -> "\u001b[15~"
-            KeyEvent.KEYCODE_F6 -> "\u001b[17~"
-            KeyEvent.KEYCODE_F7 -> "\u001b[18~"
-            KeyEvent.KEYCODE_F8 -> "\u001b[19~"
-            KeyEvent.KEYCODE_F9 -> "\u001b[20~"
-            KeyEvent.KEYCODE_F10 -> "\u001b[21~"
-            KeyEvent.KEYCODE_F11 -> "\u001b[23~"
-            KeyEvent.KEYCODE_F12 -> "\u001b[24~"
-            else -> null
-        }
-        if (fKeySequence != null) {
-            session.write(fKeySequence)
-            return true
-        }
-        return false
+        val sequence = fnKeySequences[keyCode] ?: return false
+        session.write(sequence)
+        return true
     }
     override fun onKeyUp(keyCode: Int, e: KeyEvent): Boolean = false
 

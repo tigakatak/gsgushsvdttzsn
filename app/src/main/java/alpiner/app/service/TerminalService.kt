@@ -69,7 +69,7 @@ class TerminalService : Service() {
         val sessionCount = sessionStore.sessions.size
         return NotificationCompat.Builder(this, AlpinerApp.CHANNEL_TERMINAL)
             .setContentTitle("$sessionCount session${if (sessionCount == 1) "" else "s"}")
-            .setSmallIcon(alpiner.app.R.drawable.ic_notification)
+            .setSmallIcon(R.drawable.ic_notification)
             .setColor(themeAccentColor())
             .setContentIntent(pendingIntent)
             .setOngoing(true)

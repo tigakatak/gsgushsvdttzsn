@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import java.io.File
 import java.io.FileWriter
+import java.io.Writer
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -48,7 +49,7 @@ object CrashHandler {
         }
     }
 
-    private fun writeStackTrace(writer: java.io.Writer, throwable: Throwable, depth: Int) {
+    private fun writeStackTrace(writer: Writer, throwable: Throwable, depth: Int) {
         if (depth > 10) return
         for (element in throwable.stackTrace) {
             writer.write("\tat ${element.toString()}\n")

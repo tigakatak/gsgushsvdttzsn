@@ -2,20 +2,24 @@ package alpiner.app.distro
 
 import android.content.Context
 import android.os.StatFs
-import android.provider.DocumentsContract
 import android.util.Log
+import alpiner.app.storage.DocumentsProvider
 import alpiner.app.ui.Prefs
 import alpiner.app.util.FileUtil
+import alpiner.app.util.Format
 import alpiner.app.util.isUnder
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
@@ -63,12 +67,12 @@ class AlpineInstaller(private val context: Context) {
             rootfsDir.mkdirs()
 
             val tarball = cachedTarballFile(distro)
+            // Direct download: a failed attempt may have left a truncated file.
             if (tarball.exists()) tarball.delete()
-            val partial = File(tarballDir(), tarball.name + ".part")
             val tarballUrl = distro.tarballUrl
             Log.i("AlpineInstaller", "Downloading $tarballUrl")
 
-            downloadTarball(tarballUrl, tarball, partial, onProgress, gen)
+            downloadTarball(tarballUrl, tarball, onProgress, gen)
             checkCancel(gen)
 
             val expectedSha = distro.sha256
@@ -79,7 +83,7 @@ class AlpineInstaller(private val context: Context) {
 
             extractTarball(tarball, rootfsDir, onProgress, gen)
             checkCancel(gen)
-            fixupDirectoryPermissions(rootfsDir)
+            // Directory permissions are owned by repairRootfs() on first session start.
             saveInstalled(distro.name)
             // The base tarball exists only to reset without re-downloading;
             // keeping it doubles disk usage (rootfs + compressed copy). Drop
@@ -93,7 +97,7 @@ class AlpineInstaller(private val context: Context) {
             Log.i("AlpineInstaller", "Install cancelled for ${distro.name}")
             cleanup(distro, gen)
             throw e
-        } catch (e: kotlinx.coroutines.CancellationException) {
+        } catch (e: CancellationException) {
             cleanup(distro, gen)
             throw e
         } catch (e: Exception) {
@@ -116,11 +120,10 @@ class AlpineInstaller(private val context: Context) {
      * - runs on Dispatchers.IO regardless of caller,
      * - never follows symlinks (see [FileUtil]),
      * - tracks visited canonical paths so symlink cycles cannot loop forever.
-     * Failures are logged, not thrown; returns false if any node could not
-     * be removed.
+     * Failures are logged, not thrown.
      */
-    suspend fun deleteRootfsSafe(dir: File): Boolean = withContext(Dispatchers.IO) {
-        if (!dir.exists()) true else FileUtil.deleteTreeWithoutFollowingLinks(dir)
+    private suspend fun deleteRootfsSafe(dir: File) = withContext(Dispatchers.IO) {
+        if (dir.exists()) FileUtil.deleteTreeWithoutFollowingLinks(dir)
     }
 
     private fun checkCancel(gen: Int) {
@@ -137,99 +140,60 @@ class AlpineInstaller(private val context: Context) {
         // and skip the delete entirely. Each step is best-effort so one
         // failure cannot block the remaining cleanup.
         withContext(NonCancellable) {
-            if (runCatching { validateDistroName(distro.name) }.isFailure) return@withContext
             val dir = getRootfsDir(distro.name)
             runCatching { deleteRootfsSafe(dir) }
-            // The .part file is intentionally kept: a fresh attempt
-            // resumes from it instead of restarting the download.
             runCatching { cachedTarballFile(distro).delete() }
             runCatching { installedMarker(distro.name).delete() }
-            notifyDocumentRootsChanged()
+            DocumentsProvider.notifyRootsChanged(context)
         }
     }
 
-    /** Atomically promotes a finished .part download to its final name. */
-    private fun promotePartial(partial: File, dest: File) {
-        if (partial.renameTo(dest)) return
-        partial.copyTo(dest, overwrite = true)
-        partial.delete()
-    }
-
-    private suspend fun downloadTarball(
+    private fun downloadTarball(
         urlString: String,
         dest: File,
-        partial: File,
         onProgress: (Progress) -> Unit,
         gen: Int
     ) {
-        val httpUrl = URL(urlString)
-        val conn = httpUrl.openConnection() as HttpURLConnection
+        val conn = URL(urlString).openConnection() as HttpURLConnection
         try {
             conn.connectTimeout = Prefs.CONNECT_TIMEOUT_MS
             conn.readTimeout = Prefs.READ_TIMEOUT_MS
             conn.instanceFollowRedirects = true
-            var resumeOffset = 0L
-            if (partial.exists()) {
-                resumeOffset = partial.length()
-                conn.setRequestProperty("Range", "bytes=$resumeOffset-")
-            }
             conn.connect()
 
-            val responseCode = conn.responseCode
-            if (responseCode == HTTP_RANGE_NOT_SATISFIABLE) {
-                // Server says the partial already covers the whole file:
-                // promote it and let the caller's checksum verify it.
-                promotePartial(partial, dest)
-                return
+            if (conn.responseCode != HttpURLConnection.HTTP_OK) {
+                throw Exception("HTTP ${conn.responseCode} for $urlString")
             }
-            val resuming = responseCode == HttpURLConnection.HTTP_PARTIAL && resumeOffset > 0
-            if (responseCode != HttpURLConnection.HTTP_OK && !resuming) {
-                throw Exception("HTTP $responseCode for $urlString")
-            }
-            if (!resuming) resumeOffset = 0
-
-            val rangeLen = conn.contentLengthLong
-            val total = if (rangeLen > 0) resumeOffset + rangeLen else -1L
+            val total = conn.contentLengthLong
             if (total > 0) {
                 // Incoming bytes plus room for the extracted rootfs
                 // (gz decompresses roughly ROOTFS_EXPANSION_FACTOR:1).
-                requireFreeSpace((total - resumeOffset) + total * ROOTFS_EXPANSION_FACTOR, "installing ${dest.name}")
+                requireFreeSpace(total + total * ROOTFS_EXPANSION_FACTOR, "installing ${dest.name}")
             }
 
+            val throttler = ProgressThrottler(PROGRESS_EMIT_INTERVAL_MS)
             val buffer = ByteArray(8192)
-            FileOutputStream(partial, resuming).use { output ->
+            FileOutputStream(dest).use { output ->
                 conn.inputStream.use { input ->
-                    var downloaded = resumeOffset
-                    var sessionBytes = 0L
+                    var downloaded = 0L
                     val startTime = System.currentTimeMillis()
-                    var lastEmit = 0L
-
-                    while (true) {
-                        val read = input.read(buffer)
-                        if (read == -1) break
+                    readBlocks(input, buffer) { read ->
                         checkCancel(gen)
                         output.write(buffer, 0, read)
                         downloaded += read
-                        sessionBytes += read
                         val now = System.currentTimeMillis()
                         val finished = total > 0 && downloaded >= total
-                        val throttled = now - lastEmit < PROGRESS_EMIT_INTERVAL_MS && !finished
-                        if (throttled) continue
-                        lastEmit = now
+                        if (!throttler.shouldEmit(now, finished)) return@readBlocks
                         val elapsed = (now - startTime) / 1000
-                        val speed = if (elapsed > 0) {
-                            "${(sessionBytes / 1000 / elapsed)} KB/s"
-                        } else "0 KB/s"
+                        val speed = if (elapsed > 0) "${(downloaded / 1000 / elapsed)} KB/s" else "0 KB/s"
                         if (total > 0) {
-                            val percent = ((downloaded * 100) / total).toInt()
-                            onProgress(Progress(percent, speed))
+                            onProgress(Progress(((downloaded * 100) / total).toInt(), speed))
                         } else {
-                            onProgress(Progress(-1, "${alpiner.app.util.Format.size(downloaded)} - $speed"))
+                            onProgress(Progress(-1, "${Format.size(downloaded)} - $speed"))
                         }
                     }
                 }
             }
-            promotePartial(partial, dest)
         } finally {
             conn.disconnect()
         }
@@ -239,11 +203,7 @@ class AlpineInstaller(private val context: Context) {
         val digest = MessageDigest.getInstance("SHA-256")
         file.inputStream().use { input ->
             val buffer = ByteArray(8192)
-            while (true) {
-                val read = input.read(buffer)
-                if (read == -1) break
-                digest.update(buffer, 0, read)
-            }
+            readBlocks(input, buffer) { read -> digest.update(buffer, 0, read) }
         }
         val actual = digest.digest().joinToString("") { "%02x".format(it) }
         if (actual != expectedSha256.lowercase()) {
@@ -258,8 +218,8 @@ class AlpineInstaller(private val context: Context) {
         if (available < needed) {
             throw Exception(
                 "Not enough free space for $what: need " +
-                    "${alpiner.app.util.Format.size(needed)}, " +
-                    "have ${alpiner.app.util.Format.size(available)}"
+                    "${Format.size(needed)}, " +
+                    "have ${Format.size(available)}"
             )
         }
     }
@@ -276,26 +236,24 @@ class AlpineInstaller(private val context: Context) {
         extractWithJavaGz(tarball, dest, onProgress, gen)
     }
 
-    /**
-     * Wraps an InputStream and counts the bytes that have been read through it.
-     * Used to compute extraction progress from the *compressed* byte position
-     * (rather than the decompressed byte count, which produced meaningless
-     * percentages because the denominator was an arbitrary 3x fudge factor).
-     */
-    private class CountingInputStream(private val inner: java.io.InputStream) : java.io.InputStream() {
-        var bytesRead: Long = 0L
-            private set
 
-        override fun read(): Int {
-            val v = inner.read()
-            if (v != -1) bytesRead++
-            return v
+    /** Streams [input] through [buffer], invoking [onBlock] with each read's byte count. */
+    private inline fun readBlocks(input: InputStream, buffer: ByteArray, onBlock: (Int) -> Unit) {
+        while (true) {
+            val read = input.read(buffer)
+            if (read == -1) break
+            onBlock(read)
         }
+    }
 
-        override fun read(b: ByteArray, off: Int, len: Int): Int {
-            val n = inner.read(b, off, len)
-            if (n > 0) bytesRead += n
-            return n
+    /** Emits at most once per [intervalMs]; forced emissions always pass. */
+    private class ProgressThrottler(private val intervalMs: Long) {
+        private var lastEmit = 0L
+
+        fun shouldEmit(now: Long, force: Boolean = false): Boolean {
+            if (!force && now - lastEmit < intervalMs) return false
+            lastEmit = now
+            return true
         }
     }
 
@@ -305,13 +263,11 @@ class AlpineInstaller(private val context: Context) {
         gen: Int
     ) {
         try {
-            val total = tarball.length()
             FileInputStream(tarball).use { fis ->
-                val counter = CountingInputStream(fis)
-                GzipCompressorInputStream(counter).use { gzIn ->
+                GzipCompressorInputStream(fis).use { gzIn ->
                     BufferedInputStream(gzIn, 65536).use { bis ->
                         TarArchiveInputStream(bis).use { tarIn ->
-                            extractTarEntries(tarIn, dest, total, onProgress, gen) { counter.bytesRead }
+                            extractTarEntries(tarIn, dest, onProgress, gen)
                         }
                     }
                 }
@@ -323,11 +279,11 @@ class AlpineInstaller(private val context: Context) {
 
     private fun extractTarEntries(
         tarIn: TarArchiveInputStream, dest: File,
-        totalForProgress: Long,
         onProgress: (Progress) -> Unit,
-        gen: Int,
-        bytesReadProvider: () -> Long
-    ): Int {
+        gen: Int
+    ) {
+        // 8 MB / 515 entries extracts in seconds: an indeterminate bar is enough.
+        onProgress(Progress(-1, "Extracting"))
         val firstEntry = tarIn.getNextEntry()
         var prefixToStrip = ""
         if (firstEntry != null) {
@@ -347,7 +303,7 @@ class AlpineInstaller(private val context: Context) {
                 name
             }
 
-        fun processEntry(entry: org.apache.commons.compress.archivers.tar.TarArchiveEntry) {
+        fun processEntry(entry: TarArchiveEntry) {
             val entryName = stripPrefix(entry.name)
             // Root-dir marker entries ("./", ".") carry no content and resolve
             // to the destination itself; skip them instead of rejecting them
@@ -403,9 +359,7 @@ class AlpineInstaller(private val context: Context) {
                 target.parentFile?.mkdirs()
                 FileOutputStream(target).use { out ->
                     val buf = ByteArray(65536)
-                    while (true) {
-                        val read = tarIn.read(buf)
-                        if (read == -1) break
+                    readBlocks(tarIn, buf) { read ->
                         checkCancel(gen)
                         out.write(buf, 0, read)
                     }
@@ -417,28 +371,13 @@ class AlpineInstaller(private val context: Context) {
                 target.setWritable(true, false)
             }
         }
-        var count = 0
-        if (firstEntry != null) {
-            processEntry(firstEntry)
-            count++
-        }
-        var lastEmit = 0L
-        var entry: org.apache.commons.compress.archivers.tar.TarArchiveEntry? = tarIn.getNextEntry()
+        if (firstEntry != null) processEntry(firstEntry)
+        var entry: TarArchiveEntry? = tarIn.getNextEntry()
         while (entry != null) {
             checkCancel(gen)
             processEntry(entry)
-            count++
-            val now = System.currentTimeMillis()
-            if (now - lastEmit >= PROGRESS_EMIT_INTERVAL_MS) {
-                lastEmit = now
-                val pct = if (totalForProgress > 0) {
-                    ((bytesReadProvider() * 100L) / totalForProgress).toInt().coerceIn(0, 99)
-                } else 0
-                onProgress(Progress(pct, "Extracting"))
-            }
             entry = tarIn.getNextEntry()
         }
-        return count
     }
 
     /**
@@ -466,9 +405,7 @@ class AlpineInstaller(private val context: Context) {
         return nameservers != guestDnsServers
     }
 
-    private fun writeResolvConf(rootfs: File) {
-        val resolv = File(rootfs, "etc/resolv.conf")
-        if (!needsResolvRewrite(resolv)) return
+    private fun writeResolvConf(resolv: File) {
         resolv.parentFile?.mkdirs()
         // A symlink (e.g. -> /run/resolvconf/resolv.conf) must be removed
         // first so writeText below cannot follow it out of the rootfs.
@@ -549,9 +486,10 @@ class AlpineInstaller(private val context: Context) {
         val rootDir = File(rootfs, "root")
         if (!rootDir.exists() && rootDir.mkdirs()) add(RepairLine("Created /root"))
         addAll(repairShell(rootfs))
-        if (needsResolvRewrite(File(rootfs, "etc/resolv.conf"))) {
-            writeResolvConf(rootfs)
-            add(RepairLine("Created etc/resolv.conf"))
+        val resolv = File(rootfs, "etc/resolv.conf")
+        if (needsResolvRewrite(resolv)) {
+            writeResolvConf(resolv)
+            add(RepairLine("Rebuilt etc/resolv.conf (fixed DNS)"))
         }
     }
 
@@ -621,48 +559,34 @@ class AlpineInstaller(private val context: Context) {
         return repairs
     }
 
-    fun getRootfsDir(distroName: String): File {
-        val validName = validateDistroName(distroName)
-
-        val rootfsParent = File(context.filesDir, "rootfs").canonicalFile
-        val rootfsDir = File(rootfsParent, validName).canonicalFile
-        require(rootfsDir.parentFile == rootfsParent) { "Invalid distro path" }
-        return rootfsDir
-    }
+    fun getRootfsDir(distroName: String): File =
+        File(DistroPaths.rootfsParent(context), distroName).canonicalFile
 
     fun saveInstalled(distroName: String) {
-        val validName = validateDistroName(distroName)
-        installedMarker(validName).writeText(validName)
-        notifyDocumentRootsChanged()
+        installedMarker(distroName).writeText(distroName)
+        DocumentsProvider.notifyRootsChanged(context)
     }
+
+    /** True when [distroName] finished an install: marker present and tree intact. */
+    fun isInstalled(distroName: String): Boolean =
+        installedMarker(distroName).exists() && getRootfsDir(distroName).exists()
 
     /** Marker file whose presence records [distroName] as installed. */
     private fun installedMarker(distroName: String): File =
         File(File(context.filesDir, "installed").apply { mkdirs() }, distroName)
-
-    private fun validateDistroName(distroName: String): String {
-        require(distroName.isNotBlank()) { "Distro name cannot be empty" }
-        require(distroName == distroName.trim()) { "Invalid distro name" }
-        require(distroName != "." && distroName != "..") { "Invalid distro name" }
-        require('/' !in distroName && '\\' !in distroName && '\u0000' !in distroName) {
-            "Invalid distro name"
-        }
-        return distroName
-    }
 
     /**
      * Startup cleanup for disk usage not owned by any visible feature:
      * - rootfs dirs without an "installed" marker (husk of an interrupted
      *   uninstall) that are at least a day old, so an in-flight install (which
      *   also has no marker yet) is never touched;
-     * - download files (.part resume fragments and stray tarballs) older than
-     *   a week.
+     * - stray download files (truncated tarballs) older than a week.
      */
     suspend fun sweepOrphanFiles() = withContext(Dispatchers.IO) {
         val dayMs = 24L * 60 * 60 * 1000
         val huskCutoff = System.currentTimeMillis() - dayMs
-        val partialCutoff = System.currentTimeMillis() - 7 * dayMs
-        val rootfsParent = File(context.filesDir, "rootfs").canonicalFile
+        val staleCutoff = System.currentTimeMillis() - 7 * dayMs
+        val rootfsParent = DistroPaths.rootfsParent(context).canonicalFile
         rootfsParent.listFiles()?.forEach { dir ->
             if (dir.isDirectory && !FileUtil.isSymlink(dir) &&
                 !installedMarker(dir.name).exists() &&
@@ -673,7 +597,7 @@ class AlpineInstaller(private val context: Context) {
             }
         }
         tarballDir().listFiles()?.forEach { f ->
-            if (f.isFile && f.lastModified() < partialCutoff) {
+            if (f.isFile && f.lastModified() < staleCutoff) {
                 Log.i("AlpineInstaller", "Sweeping stale download file ${f.name}")
                 f.delete()
             }
@@ -681,7 +605,7 @@ class AlpineInstaller(private val context: Context) {
     }
 
     private companion object {
-        const val PROGRESS_EMIT_INTERVAL_MS = 100L
+        private const val PROGRESS_EMIT_INTERVAL_MS = 100L
 
         /**
          * Room reserved for the extracted rootfs on top of the tarball:
@@ -689,23 +613,5 @@ class AlpineInstaller(private val context: Context) {
          */
         private const val ROOTFS_EXPANSION_FACTOR = 2L
 
-        /**
-         * java.net.HttpURLConnection on Android does not define
-         * HTTP_REQUESTED_RANGE_NOT_SATISFIABLE (OpenJDK only), so the 416
-         * status code is spelled out here.
-         */
-        const val HTTP_RANGE_NOT_SATISFIABLE = 416
-    }
-
-    private fun notifyDocumentRootsChanged() {
-        val authority = "${context.packageName}.documents"
-        context.contentResolver.notifyChange(
-            DocumentsContract.buildRootsUri(authority),
-            null,
-        )
-        context.contentResolver.notifyChange(
-            DocumentsContract.buildChildDocumentsUri(authority, "root"),
-            null,
-        )
     }
 }

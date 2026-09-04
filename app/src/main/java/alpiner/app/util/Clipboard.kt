@@ -13,7 +13,8 @@ object Clipboard {
     }
 
     fun primaryText(context: Context): String? =
-        manager(context)?.primaryClip?.getItemAt(0)?.text?.toString()
+        manager(context)?.primaryClip?.takeIf { it.itemCount > 0 }
+            ?.getItemAt(0)?.text?.toString()
 
     private fun manager(context: Context): ClipboardManager? =
         context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
