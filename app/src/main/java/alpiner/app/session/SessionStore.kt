@@ -97,6 +97,8 @@ internal class SessionStore {
             else -> old.currentIndex
         }
         _state.value = State(sessions, currentIndex)
+        // Numbering restarts at "session 1" once every session is gone.
+        if (sessions.isEmpty()) sessionCounter = 0
     }
 
     fun finishAllSessions() {
@@ -106,6 +108,7 @@ internal class SessionStore {
             sessionClients.values.forEach { it.detachAll() }
             sessionClients.clear()
             active.forEach { it.finishIfRunning() }
+            sessionCounter = 0
         }
     }
 
