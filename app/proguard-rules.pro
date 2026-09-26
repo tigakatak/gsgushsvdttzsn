@@ -1,5 +1,4 @@
--keep class org.apache.commons.compress.** { *; }
--keep class alpiner.app.util.CrashHandler { *; }
+# Optional codecs pulled in by commons-compress at compile time only.
 -dontwarn com.github.luben.zstd.**
 -dontwarn org.brotli.dec.**
 -dontwarn org.objectweb.asm.**

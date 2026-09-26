@@ -75,7 +75,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="8"
+                        android:text="6"
                         android:textColor="?attr/terminalText"
                         android:textSize="12sp" />
 
@@ -84,15 +84,15 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:max="40"
-                        android:min="8"
-                        android:progress="14"
+                        android:max="24"
+                        android:min="6"
+                        android:progress="10"
                         android:layout_marginHorizontal="8dp" />
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="40"
+                        android:text="24"
                         android:textColor="?attr/terminalText"
                         android:textSize="12sp" />
 
@@ -223,6 +223,44 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:checked="true" />
+
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginTop="16dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Keep screen on"
+                            android:textColor="?attr/terminalText"
+                            android:textSize="14sp" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="While the terminal is visible"
+                            android:textColor="?attr/terminalText"
+                            android:textSize="12sp"
+                            android:alpha="0.6" />
+
+                    </LinearLayout>
+
+                    <Switch
+                        android:id="@+id/keep_screen_on_switch"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:checked="false" />
 
                 </LinearLayout>
 

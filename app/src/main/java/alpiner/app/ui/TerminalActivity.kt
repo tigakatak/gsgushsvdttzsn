@@ -42,6 +42,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.viewpager2.widget.ViewPager2
+import alpiner.app.AlpinerApp
 import alpiner.app.R
 import alpiner.app.distro.AlpineInstaller
 import alpiner.app.distro.AlpineRegistry
@@ -69,15 +70,14 @@ class TerminalActivity : AppCompatActivity() {
     private lateinit var sessionListContainer: LinearLayout
     private lateinit var extraKeysWrapper: LinearLayout
     private lateinit var extraKeysPager: ViewPager2
-    private var rootContainer: LinearLayout? = null
-    private var terminalBgLayer: View? = null
     private var row1Container: LinearLayout? = null
     private var row2Container: LinearLayout? = null
     private var inputField: EditText? = null
 
     private val modifiers = ModifierState()
     private var terminalBackend: TerminalBackend? = null
-    private val installer by lazy { AlpineInstaller(applicationContext) }
+    private val app get() = applicationContext as AlpinerApp
+    private val installer: AlpineInstaller get() = app.alpineInstaller
 
     internal fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
@@ -87,8 +87,18 @@ class TerminalActivity : AppCompatActivity() {
         private const val MENU_EXPORT = 14
         private const val MENU_SETTINGS = 15
 
+        /** Binder clips above this size are rejected with TransactionTooLargeException. */
+        private const val CLIPBOARD_MAX_CHARS = 200_000
+
         private val MODIFIER_KEY_CODES: Set<Int> =
             TerminalModifier.entries.flatMapTo(mutableSetOf()) { it.keyCodes }
+
+        /** Install job shared across activity recreations (config changes). */
+        private var installJob: Job? = null
+
+        /** The newest live activity, so install callbacks survive recreation. */
+        @Volatile
+        private var foreground: TerminalActivity? = null
 
         fun launchIntent(context: Context): Intent =
             Intent(context, TerminalActivity::class.java).apply {
@@ -103,6 +113,24 @@ class TerminalActivity : AppCompatActivity() {
     private val sessions: List<TerminalSession> get() = sessionStore.sessions
     private val currentIndex: Int get() = sessionStore.currentIndex
 
+    /** Theme palette resolved once per [refreshPalette], not per view/touch. */
+    private var paletteBg = 0
+    private var paletteText = 0
+    private var paletteExtraKeysBg = 0
+    private var paletteMuted = 0
+    private var paletteHint = 0
+    private var paletteModifierHi = 0
+    private var autohideKeys = false
+
+    private fun refreshPalette() {
+        paletteBg = terminalBgColor()
+        paletteText = terminalTextColor()
+        paletteExtraKeysBg = extraKeysBgColor()
+        paletteMuted = mutedTextColor()
+        paletteHint = hintColor()
+        paletteModifierHi = modifierHighlightColor()
+        autohideKeys = prefs().getBoolean(Prefs.KEY_AUTOHIDE_KEYS, false)
+    }
 
     private val requestNotificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -119,21 +147,21 @@ class TerminalActivity : AppCompatActivity() {
         AppTheme.apply(this)
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_terminal)
+        refreshPalette()
         setupImeVisibilityListener()
+        foreground = this
 
-        if (!StoragePermission.isAccessible()) {
-            toast("Alpiner needs All files access to use /storage/emulated/0 in the terminal")
-            StoragePermission.requestAccess(this)
-        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
         ) {
             requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
+        // All-files access is requested from onResume() with a throttle so a
+        // denied permission does not re-open Settings on every stop/start.
         // Clean up disk usage not owned by any visible feature: rootfs husks
         // from interrupted installs and stale download files.
-        lifecycleScope.launch(Dispatchers.IO) {
+        app.appScope.launch(Dispatchers.IO) {
             installer.sweepOrphanFiles()
         }
 
@@ -141,8 +169,6 @@ class TerminalActivity : AppCompatActivity() {
         drawerLayout = findViewById(R.id.drawer_layout)
         sessionListContainer = findViewById(R.id.session_list_container)
         extraKeysWrapper = findViewById(R.id.extra_keys_wrapper)
-        rootContainer = findViewById(R.id.root_container)
-        terminalBgLayer = findViewById(R.id.terminal_bg_layer)
         extraKeysPager = findViewById(R.id.extra_keys_pager)
         extraKeysPager.offscreenPageLimit = 1
         extraKeysPager.adapter = ExtraKeysPagerAdapter(
@@ -150,9 +176,9 @@ class TerminalActivity : AppCompatActivity() {
             onKeysPageReady = { row1, row2 ->
                 row1Container = row1
                 row2Container = row2
-                val labels = extraKeyLabels()
-                setupExtraKeysRow(row1Container, labels.first)
-                setupExtraKeysRow(row2Container, labels.second)
+                appliedExtraKeyLabels = extraKeyLabels()
+                setupExtraKeysRow(row1Container, appliedExtraKeyLabels!!.first)
+                setupExtraKeysRow(row2Container, appliedExtraKeyLabels!!.second)
                 updateModifierButtons()
             },
             onInputPageReady = { et -> inputField = et }
@@ -173,12 +199,10 @@ class TerminalActivity : AppCompatActivity() {
 
         registerForContextMenu(terminalView)
 
-        val prefs = prefs()
-
-        if (prefs.getBoolean(Prefs.KEY_WAKELOCK, Prefs.WAKELOCK_DEFAULT)) {
+        if (prefs().getBoolean(Prefs.KEY_KEEP_SCREEN_ON, Prefs.KEEP_SCREEN_ON_DEFAULT)) {
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
-        if (prefs.getBoolean(Prefs.KEY_AUTOHIDE_KEYS, false)) {
+        if (autohideKeys) {
             toggleExtraKeys(false)
         }
 
@@ -196,11 +220,17 @@ class TerminalActivity : AppCompatActivity() {
             }
         }
         if (sessions.isEmpty()) {
-            requestNewSession()
+            if (installJob?.isActive == true) {
+                // An install started by a previous instance is still running;
+                // re-attach the progress UI instead of starting a second one.
+                showInstallOverlay(distro.displayName)
+            } else {
+                requestNewSession()
+            }
         } else {
             // observeSessions() attaches the backend, the current session
             // and the drawer on its first collection (Lifecycle.STARTED).
-            startForegroundService()
+            startTerminalService(null)
         }
     }
 
@@ -220,13 +250,6 @@ class TerminalActivity : AppCompatActivity() {
                 sessionStore.state.collect { st ->
                     val active = st.sessions
                     val backend = ensureTerminalBackend()
-                    // mRenderer is only set once the view has been laid out,
-                    // so a null renderer means "first emission, not yet
-                    // initialized" and the font/colors must be (re)applied.
-                    if (terminalView.mRenderer == null) {
-                        backend.applyFontSize()
-                        terminalView.setBackgroundColor(terminalBgColor())
-                    }
                     active.forEach { sessionStore.attachClient(it, backend) }
                     if (active.isEmpty()) {
                         // The session list can only become empty after the store
@@ -260,7 +283,6 @@ class TerminalActivity : AppCompatActivity() {
     private val keyRepeatHandler = Handler(Looper.getMainLooper())
 
     private fun createKeyButton(label: String, action: () -> Unit): Button {
-        val textColor = terminalTextColor()
         val repeatable = isRepeatableKey(label)
         val isSymbol = label.length == 1 && !label[0].isLetterOrDigit()
         val initialDelay = Prefs.KEY_REPEAT_INITIAL_DELAY
@@ -273,7 +295,7 @@ class TerminalActivity : AppCompatActivity() {
         }
         return Button(this).apply {
             text = label
-            setTextColor(textColor)
+            setTextColor(paletteText)
             textSize = if (isSymbol) 16f else 12f
             setBackgroundResource(0)
             isFocusable = false
@@ -288,7 +310,7 @@ class TerminalActivity : AppCompatActivity() {
             setOnTouchListener { v, event ->
                 when (event.action) {
                     MotionEvent.ACTION_DOWN -> {
-                        setBackgroundColor(modifierHighlightColor())
+                        setBackgroundColor(paletteModifierHi)
                         v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                         if (repeatable) {
                             action()
@@ -314,10 +336,9 @@ class TerminalActivity : AppCompatActivity() {
     }
 
     private fun extraKeyLabels(): Pair<List<String>, List<String>> {
-        val prefs = prefs()
         val split = { s: String -> s.trim().split(Regex("\\s+")).filter { it.isNotEmpty() } }
-        return split(prefs.getString(Prefs.KEY_EXTRA_KEYS_ROW1, Prefs.EXTRA_KEYS_ROW1_DEFAULT)!!) to
-            split(prefs.getString(Prefs.KEY_EXTRA_KEYS_ROW2, Prefs.EXTRA_KEYS_ROW2_DEFAULT)!!)
+        return split(prefs().getString(Prefs.KEY_EXTRA_KEYS_ROW1, Prefs.EXTRA_KEYS_ROW1_DEFAULT)!!) to
+            split(prefs().getString(Prefs.KEY_EXTRA_KEYS_ROW2, Prefs.EXTRA_KEYS_ROW2_DEFAULT)!!)
     }
 
     /**
@@ -415,7 +436,7 @@ class TerminalActivity : AppCompatActivity() {
         forEachKeyButton { btn ->
             val modifier = TerminalModifier.forLabel(btn.text.toString()) ?: return@forEachKeyButton
             btn.setBackgroundColor(
-                if (modifiers.isActive(modifier)) modifierHighlightColor() else 0
+                if (modifiers.isActive(modifier)) paletteModifierHi else 0
             )
         }
     }
@@ -459,10 +480,7 @@ class TerminalActivity : AppCompatActivity() {
     }
 
     private fun updateExtraKeysVisibility() {
-        val prefs = prefs()
-        toggleExtraKeys(
-            if (prefs.getBoolean(Prefs.KEY_AUTOHIDE_KEYS, false)) lastImeVisible else true
-        )
+        toggleExtraKeys(if (autohideKeys) lastImeVisible else true)
     }
 
     internal fun sendInputLine(text: String) {
@@ -484,12 +502,20 @@ class TerminalActivity : AppCompatActivity() {
             ensureDistroInstalled()
             return
         }
-        ContextCompat.startForegroundService(
-            this,
-            Intent(this, TerminalService::class.java).apply {
-                action = TerminalService.ACTION_CREATE_SESSION
-            },
-        )
+        startTerminalService(TerminalService.ACTION_CREATE_SESSION)
+    }
+
+    private fun startTerminalService(action: String?) {
+        try {
+            ContextCompat.startForegroundService(
+                this,
+                Intent(this, TerminalService::class.java).apply { this.action = action }
+            )
+        } catch (e: Exception) {
+            // Android 12+ forbids starting a foreground service while the app
+            // is backgrounded; onResume() retries once we are visible again.
+            Log.e("TerminalActivity", "Foreground service start failed", e)
+        }
     }
 
     private fun switchToSession(index: Int) {
@@ -527,7 +553,7 @@ class TerminalActivity : AppCompatActivity() {
         if (sessions.isEmpty()) {
             sessionListContainer.addView(TextView(this).apply {
                 text = "No sessions"
-                setTextColor(mutedTextColor())
+                setTextColor(paletteMuted)
                 textSize = 13f
                 setPadding(16, 20, 16, 20)
             })
@@ -537,7 +563,7 @@ class TerminalActivity : AppCompatActivity() {
     }
 
     private fun buildSessionCard(i: Int): MaterialCardView {
-        val bgColor = if (i == currentIndex) extraKeysBgColor() else 0
+        val bgColor = if (i == currentIndex) paletteExtraKeysBg else 0
         return MaterialCardView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -560,7 +586,7 @@ class TerminalActivity : AppCompatActivity() {
                 setPadding(12, 10, 8, 10)
                 addView(TextView(context).apply {
                     text = sessions[i].mSessionName
-                    setTextColor(terminalTextColor())
+                    setTextColor(paletteText)
                     textSize = 13f
                     layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
                     isClickable = false
@@ -579,7 +605,7 @@ class TerminalActivity : AppCompatActivity() {
                             setColor(0xFFA6E3A1.toInt())
                         } else {
                             setColor(0x00000000)
-                            setStroke(dp(2), mutedTextColor())
+                            setStroke(dp(2), paletteMuted)
                         }
                     }
                 })
@@ -590,7 +616,7 @@ class TerminalActivity : AppCompatActivity() {
                             context, android.R.drawable.ic_menu_close_clear_cancel
                         )
                     )
-                    imageTintList = ColorStateList.valueOf(mutedTextColor())
+                    imageTintList = ColorStateList.valueOf(paletteMuted)
                     setOnClickListener { closeSession(i) }
                     setPadding(dp(10), dp(10), dp(10), dp(10))
                 })
@@ -599,15 +625,17 @@ class TerminalActivity : AppCompatActivity() {
     }
 
     private fun showRenameSessionDialog(index: Int) {
-        val currentLabel = sessions[index].mSessionName
-        val input = EditText(this).apply { setText(currentLabel) }
+        // Capture the session, not the index: the list may shrink (a session
+        // exits) while the dialog is open.
+        val session = sessions.getOrNull(index) ?: return
+        val input = EditText(this).apply { setText(session.mSessionName) }
         AlertDialog.Builder(this)
             .setTitle("Rename session")
             .setView(input)
             .setPositiveButton("Rename") { _, _ ->
                 val newName = input.text.toString().trim()
                 if (newName.isNotEmpty()) {
-                    sessions[index].mSessionName = newName
+                    session.mSessionName = newName
                     updateDrawer()
                 }
             }
@@ -665,7 +693,14 @@ class TerminalActivity : AppCompatActivity() {
             }
         }
         session?.let {
-            val text = it.emulator.getScreen().getTranscriptText()
+            var text = it.emulator.getScreen().getTranscriptText()
+            // A full 30k-row transcript exceeds the binder transaction limit
+            // and crashes with TransactionTooLargeException; trim it and tell
+            // the user where the complete output went instead.
+            if (text.length > CLIPBOARD_MAX_CHARS) {
+                text = text.take(CLIPBOARD_MAX_CHARS)
+                toast("Output truncated to ${CLIPBOARD_MAX_CHARS / 1000}k chars for the clipboard", Toast.LENGTH_SHORT)
+            }
             Clipboard.copy(this, text)
             toast("Copied entire output (${text.length} chars)", Toast.LENGTH_SHORT)
         }
@@ -679,34 +714,36 @@ class TerminalActivity : AppCompatActivity() {
     private var installOverlay: LinearLayout? = null
     private var installProgressBar: ProgressBar? = null
     private var installStatusText: TextView? = null
-    private var installJob: Job? = null
 
     /**
      * The app opens straight into the terminal: a missing distro rootfs is
-     * downloaded and extracted here before the first session is created.
+     * downloaded and extracted here before the first session is created. The
+     * job runs in the application scope so rotating/unfolding the device or a
+     * dark-mode switch cannot cancel a multi-megabyte download.
      */
     private fun ensureDistroInstalled() {
-        if (installJob?.isActive == true) return
         showInstallOverlay(distro.displayName)
-        installJob = lifecycleScope.launch {
+        if (installJob?.isActive == true) return
+        installJob = app.appScope.launch {
             try {
                 withContext(Dispatchers.IO) {
                     check(ProotInstaller.isInstalled(applicationContext)) {
                         getString(R.string.proot_extraction_failed)
                     }
                     installer.install(distro) { progress ->
-                        runOnUiThread { renderInstallProgress(progress) }
+                        foreground?.runOnUiThread { renderInstallProgress(progress) }
                     }
                 }
-                clearInstallOverlay()
-                toast("${distro.displayName} installed", Toast.LENGTH_SHORT)
-                requestNewSession()
+                val activity = foreground
+                activity?.clearInstallOverlay()
+                activity?.toast("${distro.displayName} installed", Toast.LENGTH_SHORT)
+                activity?.requestNewSession()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: AlpineInstaller.CancelledException) {
-                showInstallFailed("Installation cancelled")
+                foreground?.showInstallFailed("Installation cancelled")
             } catch (e: Exception) {
-                showInstallFailed(e.message ?: "Unknown error")
+                foreground?.showInstallFailed(e.message ?: "Unknown error")
             }
         }
     }
@@ -715,10 +752,9 @@ class TerminalActivity : AppCompatActivity() {
         clearInstallOverlay()
         terminalView.visibility = View.GONE
         val parent = terminalView.parent as? ViewGroup ?: return
-        val textColor = terminalTextColor()
         val status = TextView(this).apply {
             text = "Preparing..."
-            setTextColor(textColor)
+            setTextColor(paletteText)
             textSize = 14f
         }
         val bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
@@ -730,7 +766,7 @@ class TerminalActivity : AppCompatActivity() {
             setPadding(dp(24), dp(24), dp(24), dp(24))
             addView(TextView(this@TerminalActivity).apply {
                 text = "Installing $displayName..."
-                setTextColor(textColor)
+                setTextColor(paletteText)
                 textSize = 16f
                 setPadding(0, 0, 0, dp(12))
             })
@@ -764,7 +800,8 @@ class TerminalActivity : AppCompatActivity() {
         terminalView.visibility = View.VISIBLE
     }
 
-    private fun showInstallFailed(message: String) {
+    private fun showInstallFailed(message: String, onlyIfAlive: Boolean = false) {
+        if (onlyIfAlive && (isFinishing || isDestroyed)) return
         val status = installStatusText ?: return
         status.text = "Install failed:\n$message"
         status.setTextColor(0xFFFF6B6B.toInt())
@@ -779,16 +816,9 @@ class TerminalActivity : AppCompatActivity() {
     }
 
 
-    private fun startForegroundService() {
-        try {
-            ContextCompat.startForegroundService(this, Intent(this, TerminalService::class.java))
-        } catch (e: Exception) {
-            Log.e("TerminalActivity", "Foreground service failed", e)
-        }
-    }
-
     override fun onResume() {
         super.onResume()
+        refreshPalette()
         syncExtraKeysRows()
         if (!StoragePermission.isAccessible()) {
             val prefs = prefs()
@@ -802,13 +832,21 @@ class TerminalActivity : AppCompatActivity() {
         terminalView.onScreenUpdated()
         applyTerminalColors()
         terminalBackend?.applyFontSize()
-        syncWakeLock()
+        syncKeepScreenOn()
         updateModifierButtons()
         updateExtraKeysVisibility()
+        // Covers an install that finished while the app was backgrounded:
+        // the foreground-service start it attempted there may have been
+        // rejected by the system.
+        if (sessions.isEmpty() && installJob?.isActive != true && installer.isInstalled(distro.name)) {
+            requestNewSession()
+        }
     }
 
     override fun onDestroy() {
-        if (installJob?.isActive == true) {
+        // A config-change recreation must not kill an install in flight;
+        // only a real exit (isFinishing) cancels it.
+        if (isFinishing && installJob?.isActive == true) {
             installer.cancel()
             installJob?.cancel()
         }
@@ -819,6 +857,7 @@ class TerminalActivity : AppCompatActivity() {
             it.onEmulatorReady = null
         }
         terminalBackend = null
+        if (foreground === this) foreground = null
         super.onDestroy()
     }
 
@@ -828,8 +867,7 @@ class TerminalActivity : AppCompatActivity() {
         // IME state, so in auto-hide mode re-evaluate extra-keys visibility
         // before the tap lands.
         if (ev.action == MotionEvent.ACTION_DOWN &&
-            ev.y < dp(40) && ev.rawY < dp(120) &&
-            prefs().getBoolean(Prefs.KEY_AUTOHIDE_KEYS, false)
+            ev.y < dp(40) && ev.rawY < dp(120) && autohideKeys
         ) {
             updateExtraKeysVisibility()
         }
@@ -869,27 +907,23 @@ class TerminalActivity : AppCompatActivity() {
 
     private fun applyEmulatorColors(view: TerminalView) {
         val emulator = view.mEmulator ?: return
-        val textColor = terminalTextColor()
         val palette = emulator.mColors.mCurrentColors
-        palette[TextStyle.COLOR_INDEX_FOREGROUND] = textColor
-        palette[TextStyle.COLOR_INDEX_BACKGROUND] = terminalBgColor()
-        palette[TextStyle.COLOR_INDEX_CURSOR] = textColor
+        palette[TextStyle.COLOR_INDEX_FOREGROUND] = paletteText
+        palette[TextStyle.COLOR_INDEX_BACKGROUND] = paletteBg
+        palette[TextStyle.COLOR_INDEX_CURSOR] = paletteText
         view.invalidate()
     }
 
     private fun applyTerminalColors() {
-        val bg = terminalBgColor()
-        val extraBg = extraKeysBgColor()
-        val textColor = terminalTextColor()
-        terminalView.setBackgroundColor(bg)
-        drawerLayout.setBackgroundColor(bg)
-        extraKeysWrapper.setBackgroundColor(extraBg)
-        terminalBgLayer?.setBackgroundColor(bg)
-        rootContainer?.setBackgroundColor(bg)
-        forEachKeyButton { it.setTextColor(textColor) }
+        // The window background (theme) is the full-screen backdrop, drawn
+        // once; no per-frame view layer needs to repaint it. Only the
+        // terminal surface and the extra-keys strip set a background.
+        terminalView.setBackgroundColor(paletteBg)
+        extraKeysWrapper.setBackgroundColor(paletteExtraKeysBg)
+        forEachKeyButton { it.setTextColor(paletteText) }
         inputField?.apply {
-            setTextColor(textColor)
-            setHintTextColor(hintColor())
+            setTextColor(paletteText)
+            setHintTextColor(paletteHint)
         }
         applyEmulatorColors(terminalView)
     }
@@ -905,9 +939,9 @@ class TerminalActivity : AppCompatActivity() {
     }
 
 
-    private fun syncWakeLock() {
+    private fun syncKeepScreenOn() {
         val keepScreenOn = WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
-        if (prefs().getBoolean(Prefs.KEY_WAKELOCK, Prefs.WAKELOCK_DEFAULT)) window.addFlags(keepScreenOn)
+        if (prefs().getBoolean(Prefs.KEY_KEEP_SCREEN_ON, Prefs.KEEP_SCREEN_ON_DEFAULT)) window.addFlags(keepScreenOn)
         else window.clearFlags(keepScreenOn)
     }
 

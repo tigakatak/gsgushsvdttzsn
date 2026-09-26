@@ -22,12 +22,16 @@ class TerminalBackend(
 
     private val context = context.applicationContext
 
-    // Initialized once by the init block below via applyFontSize().
-    private var fontSize = 0f
+    /**
+     * Font size in dp (what the user configures); converted to pixels with
+     * the current density for the renderer.
+     */
+    private var fontSizeDp = Prefs.FONT_SIZE_DEFAULT.toFloat()
 
     init {
         applyFontSize()
     }
+
     var onSessionFinished: ((TerminalSession) -> Unit)? = null
     var onModifierConsumed: (() -> Unit)? = null
     var onEmulatorReady: (() -> Unit)? = null
@@ -59,9 +63,8 @@ class TerminalBackend(
     override fun getTerminalCursorStyle(): Int? = null
 
     override fun onScale(scale: Float): Float {
-        fontSize = (fontSize * scale).coerceIn(Prefs.FONT_SIZE_MIN.toFloat(), Prefs.FONT_SIZE_MAX.toFloat())
-        val size = fontSize.roundToInt()
-        view.setTextSize(size)
+        fontSizeDp = (fontSizeDp * scale).coerceIn(Prefs.FONT_SIZE_MIN.toFloat(), Prefs.FONT_SIZE_MAX.toFloat())
+        applyTextSize()
         // Persist once, after the pinch gesture settles, instead of writing
         // the preference on every scale event.
         view.removeCallbacks(saveFontSizeRunnable)
@@ -70,14 +73,19 @@ class TerminalBackend(
     }
 
     private val saveFontSizeRunnable = Runnable {
-        context.prefs().edit().putInt(Prefs.KEY_FONT_SIZE, fontSize.roundToInt()).apply()
+        context.prefs().edit().putInt(Prefs.KEY_FONT_SIZE_DP, fontSizeDp.roundToInt()).apply()
     }
 
+    /** Re-reads the preference (settings change, resume). */
     fun applyFontSize() {
-        fontSize = context.prefs()
-            .getInt(Prefs.KEY_FONT_SIZE, Prefs.FONT_SIZE_DEFAULT)
-            .coerceIn(Prefs.FONT_SIZE_MIN, Prefs.FONT_SIZE_MAX).toFloat()
-        view.setTextSize(fontSize.roundToInt())
+        fontSizeDp = Prefs.fontSizeDp(context).toFloat()
+        applyTextSize()
+    }
+
+    /** Applies the current [fontSizeDp] to the renderer without re-reading prefs. */
+    private fun applyTextSize() {
+        val px = (fontSizeDp * context.resources.displayMetrics.density).roundToInt()
+        view.setTextSize(px)
     }
 
     override fun onSingleTapUp(e: MotionEvent) {
@@ -100,27 +108,12 @@ class TerminalBackend(
     override fun isTerminalViewSelected(): Boolean = true
     override fun copyModeChanged(copyMode: Boolean) {}
 
-    /** Escape sequences for hardware F1-F12 keys. */
-    private val fnKeySequences = mapOf(
-        KeyEvent.KEYCODE_F1 to "\u001bOP",
-        KeyEvent.KEYCODE_F2 to "\u001bOQ",
-        KeyEvent.KEYCODE_F3 to "\u001bOR",
-        KeyEvent.KEYCODE_F4 to "\u001bOS",
-        KeyEvent.KEYCODE_F5 to "\u001b[15~",
-        KeyEvent.KEYCODE_F6 to "\u001b[17~",
-        KeyEvent.KEYCODE_F7 to "\u001b[18~",
-        KeyEvent.KEYCODE_F8 to "\u001b[19~",
-        KeyEvent.KEYCODE_F9 to "\u001b[20~",
-        KeyEvent.KEYCODE_F10 to "\u001b[21~",
-        KeyEvent.KEYCODE_F11 to "\u001b[23~",
-        KeyEvent.KEYCODE_F12 to "\u001b[24~",
-    )
-
     override fun onKeyDown(keyCode: Int, e: KeyEvent, session: TerminalSession): Boolean {
-        val sequence = fnKeySequences[keyCode] ?: return false
-        session.write(sequence)
-        return true
+        // F1-F12 (with modifiers) are already mapped by KeyHandler via
+        // handleKeyCode(); claiming them here would drop Shift/Ctrl+F-keys.
+        return false
     }
+
     override fun onKeyUp(keyCode: Int, e: KeyEvent): Boolean = false
 
     override fun onLongPress(event: MotionEvent): Boolean = false

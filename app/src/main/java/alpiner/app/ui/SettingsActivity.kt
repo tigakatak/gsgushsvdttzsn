@@ -39,22 +39,31 @@ class SettingsActivity : AppCompatActivity() {
 
         val fontSlider = findViewById<SeekBar>(R.id.font_size_slider)
         val wakelockSwitch = findViewById<Switch>(R.id.wakelock_switch)
+        val keepScreenOnSwitch = findViewById<Switch>(R.id.keep_screen_on_switch)
         val versionInfo = findViewById<TextView>(R.id.version_info)
 
-        fontSlider.progress = prefs.getInt(Prefs.KEY_FONT_SIZE, Prefs.FONT_SIZE_DEFAULT)
+        fontSlider.progress = Prefs.fontSizeDp(this)
         wakelockSwitch.isChecked = prefs.getBoolean(Prefs.KEY_WAKELOCK, Prefs.WAKELOCK_DEFAULT)
+        keepScreenOnSwitch.isChecked = prefs.getBoolean(Prefs.KEY_KEEP_SCREEN_ON, Prefs.KEEP_SCREEN_ON_DEFAULT)
 
         fontSlider.setOnSeekBarChangeListener(simpleSeekBarListener { progress ->
-            prefs.edit().putInt(Prefs.KEY_FONT_SIZE, progress.coerceIn(Prefs.FONT_SIZE_MIN, Prefs.FONT_SIZE_MAX)).apply()
+            prefs.edit().putInt(Prefs.KEY_FONT_SIZE_DP, progress.coerceIn(Prefs.FONT_SIZE_MIN, Prefs.FONT_SIZE_MAX)).apply()
         })
 
         wakelockSwitch.setOnCheckedChangeListener { _, isChecked ->
             prefs.edit().putBoolean(Prefs.KEY_WAKELOCK, isChecked).apply()
-            // Both directions go through startForegroundService so the
-            // toggle works whether or not the service is already running.
-            val svc = Intent(this, TerminalService::class.java)
-                .setAction(if (isChecked) TerminalService.ACTION_ACQUIRE else TerminalService.ACTION_RELEASE)
-            ContextCompat.startForegroundService(this, svc)
+            // Without sessions the service is not running and will read the
+            // pref when it starts; waking it here would only flash the
+            // foreground notification.
+            if (sessionStore.sessions.isNotEmpty()) {
+                val svc = Intent(this, TerminalService::class.java)
+                    .setAction(if (isChecked) TerminalService.ACTION_ACQUIRE else TerminalService.ACTION_RELEASE)
+                ContextCompat.startForegroundService(this, svc)
+            }
+        }
+
+        keepScreenOnSwitch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean(Prefs.KEY_KEEP_SCREEN_ON, isChecked).apply()
         }
 
         val batteryBtn = findViewById<TextView>(R.id.battery_opt_btn)

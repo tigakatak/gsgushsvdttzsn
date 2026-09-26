@@ -451,6 +451,9 @@ public final class TerminalView extends View {
      * @param textSize the new font size, in density-independent pixels.
      */
     public void setTextSize(int textSize) {
+        // Recreating the renderer also re-measures the terminal; skip when
+        // callers (e.g. every onResume) pass the same size.
+        if (mRenderer != null && mRenderer.mTextSize == textSize) return;
         mRenderer = new TerminalRenderer(textSize, mRenderer == null ? Typeface.MONOSPACE : mRenderer.mTypeface);
         updateSize();
     }

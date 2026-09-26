@@ -25,8 +25,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
-import java.util.IdentityHashMap
 
 class TerminalService : Service() {
 
@@ -48,7 +46,6 @@ class TerminalService : Service() {
     @Volatile
     private var exiting = false
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private val launchScripts = IdentityHashMap<TerminalSession, File>()
     private var sessionStarting = false
     private val launcher by lazy { SessionLauncher(applicationContext) }
 
@@ -56,7 +53,7 @@ class TerminalService : Service() {
         super.onCreate()
         exiting = false
         startForeground(AlpinerApp.NOTIF_ID_TERMINAL, buildNotification())
-        if (sessionStore.sessions.isEmpty()) deleteAllLaunchScripts()
+        launcher.deleteLegacyLaunchScripts()
     }
 
     private fun buildNotification(): android.app.Notification {
@@ -92,6 +89,10 @@ class TerminalService : Service() {
                 stopIfIdle()
             }
             ACTION_CREATE_SESSION -> {
+                // The pref is the source of truth for the wake lock, so it
+                // must be (re)applied on every start path, not only when the
+                // user toggles it.
+                updateWakeLock()
                 createSession()
             }
             ACTION_EXIT -> {
@@ -131,14 +132,9 @@ class TerminalService : Service() {
         }
         sessionStarting = true
         serviceScope.launch {
-            var launchScript: File? = null
             try {
                 val spec = withContext(Dispatchers.IO) { launcher.prepare() }
-                if (exiting) {
-                    spec.launchScript.delete()
-                    return@launch
-                }
-                launchScript = spec.launchScript
+                if (exiting) return@launch
                 val bridge = SessionBridge(::handleSessionFinished)
                 val session = TerminalSession(
                     spec.executable,
@@ -148,14 +144,10 @@ class TerminalService : Service() {
                     spec.scrollbackRows,
                     bridge,
                 )
-                synchronized(launchScripts) {
-                    launchScripts[session] = spec.launchScript
-                }
                 sessionStore.addSession(session, bridge)
                 sessionStore.switchToSession(session)
                 updateNotification()
             } catch (e: Exception) {
-                launchScript?.delete()
                 Log.e("TerminalService", "Failed to launch Alpine", e)
                 Toast.makeText(this@TerminalService, "Failed to launch Alpine: ${e.message}", Toast.LENGTH_LONG).show()
             } finally {
@@ -166,7 +158,6 @@ class TerminalService : Service() {
     }
 
     private fun handleSessionFinished(session: TerminalSession) {
-        synchronized(launchScripts) { launchScripts.remove(session) }?.delete()
         serviceScope.launch {
             sessionStore.sessionFinished(session)
             if (sessionStore.sessions.isEmpty()) stopIfIdle() else updateNotification()
@@ -175,28 +166,16 @@ class TerminalService : Service() {
 
     private fun finishAllSessions() {
         sessionStore.finishAllSessions()
-        synchronized(launchScripts) {
-            launchScripts.values.forEach { it.delete() }
-            launchScripts.clear()
-        }
-        deleteAllLaunchScripts()
     }
-
-    private fun launchScriptFiles(): Array<File>? =
-        filesDir.listFiles { _, name -> name.startsWith("launch_") && name.endsWith(".sh") }
-
-    private fun deleteAllLaunchScripts() {
-        launchScriptFiles()?.forEach { it.delete() }
-    }
-
 
     private fun updateNotification() {
         getSystemService(NotificationManager::class.java)
             ?.notify(AlpinerApp.NOTIF_ID_TERMINAL, buildNotification())
     }
 
+    /** Never stops the service while a session creation is still in flight. */
     private fun stopIfIdle() {
-        if (sessionStore.sessions.isEmpty()) {
+        if (!sessionStarting && sessionStore.sessions.isEmpty()) {
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
@@ -227,6 +206,4 @@ class TerminalService : Service() {
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
     }
-
-
 }

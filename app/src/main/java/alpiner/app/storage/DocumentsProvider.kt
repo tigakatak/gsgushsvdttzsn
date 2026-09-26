@@ -106,10 +106,11 @@ class DocumentsProvider : android.provider.DocumentsProvider() {
             return cursor
         }
         val parent = resolveDocument(parentDocumentId)
-        if (!isInsideRoot(parent) || !parent.isDirectory) throw FileNotFoundException(parentDocumentId)
+        val root = canonicalRoot() ?: throw FileNotFoundException(parentDocumentId)
+        if (!isInsideRoot(parent, root) || !parent.isDirectory) throw FileNotFoundException(parentDocumentId)
         parent.listFiles()
             ?.sortedWith(compareBy<File>({ !it.isDirectory }, { it.name.lowercase() }))
-            ?.forEach { includeDocument(cursor, documentIdFor(it), it) }
+            ?.forEach { includeDocument(cursor, documentIdFor(it), it, root) }
         return cursor
     }
 
@@ -174,10 +175,15 @@ class DocumentsProvider : android.provider.DocumentsProvider() {
         false
     }
 
-    private fun includeDocument(cursor: MatrixCursor, documentId: String, file: File) {
+    private fun includeDocument(
+        cursor: MatrixCursor,
+        documentId: String,
+        file: File,
+        canonicalRoot: File? = null,
+    ) {
         val isRoot = documentId == ROOT_DOCUMENT_ID
         val isLink = !isRoot && FileUtil.isSymlink(file)
-        val safeTarget = isRoot || isInsideRoot(file)
+        val safeTarget = isRoot || isInsideRoot(file, canonicalRoot ?: canonicalRoot())
         val isDirectory = safeTarget && file.isDirectory
 
         var flags = 0
@@ -230,13 +236,21 @@ class DocumentsProvider : android.provider.DocumentsProvider() {
         return DOCUMENT_PREFIX + normalized.relativeTo(root).path
     }
 
-    /** True when [file] (after canonicalization) is the root itself or beneath it. */
-    private fun isInsideRoot(file: File): Boolean = try {
-        val root = alpineRoot.canonicalFile
-        val canonical = file.canonicalFile
-        canonical == root || canonical.isUnder(root)
+    private fun canonicalRoot(): File? = try {
+        alpineRoot.canonicalFile
     } catch (_: IOException) {
-        false
+        null
+    }
+
+    /** True when [file] (after canonicalization) is the root itself or beneath it. */
+    private fun isInsideRoot(file: File, canonicalRoot: File? = canonicalRoot()): Boolean {
+        if (canonicalRoot == null) return false
+        return try {
+            val canonical = file.canonicalFile
+            canonical == canonicalRoot || canonical.isUnder(canonicalRoot)
+        } catch (_: IOException) {
+            false
+        }
     }
 
     private fun mimeTypeFor(file: File): String =

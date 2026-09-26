@@ -11,6 +11,7 @@ import java.util.Locale
 import java.util.TimeZone
 
 object CrashHandler {
+    private const val MAX_LOGS = 10
     private var enabled = false
 
     fun init(context: Context) {
@@ -19,6 +20,7 @@ object CrashHandler {
         val base = context.getExternalFilesDir(null) ?: context.filesDir
         val crashDir = File(base, "crash")
         crashDir.mkdirs()
+        pruneOldLogs(crashDir)
         val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             val dateStr = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).apply {
@@ -47,6 +49,14 @@ object CrashHandler {
                 System.exit(1)
             }
         }
+    }
+
+    /** Keeps only the [MAX_LOGS] newest crash logs so they cannot grow unbounded. */
+    private fun pruneOldLogs(crashDir: File) {
+        val logs = crashDir.listFiles { f -> f.name.startsWith("crash_") }
+            ?.sortedByDescending { it.lastModified() }
+            ?: return
+        logs.drop(MAX_LOGS).forEach { it.delete() }
     }
 
     private fun writeStackTrace(writer: Writer, throwable: Throwable, depth: Int) {

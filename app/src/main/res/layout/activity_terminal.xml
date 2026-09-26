@@ -4,7 +4,6 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="?attr/terminalBg"
     android:fitsSystemWindows="true">
 
     <FrameLayout
@@ -21,8 +20,7 @@
             <FrameLayout
                 android:id="@+id/terminal_bg_layer"
                 android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:background="?attr/terminalBg">
+                android:layout_height="match_parent">
 
                 <com.termux.view.TerminalView
                     android:id="@+id/terminal_view"

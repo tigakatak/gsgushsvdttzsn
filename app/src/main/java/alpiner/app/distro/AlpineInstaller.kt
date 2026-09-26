@@ -47,12 +47,15 @@ class AlpineInstaller(private val context: Context) {
      * - [cancelled] stops the *current* job's loops ([cancel]) while still
      *   letting that job's cleanup run;
      * - the generation counter invalidates a *previous* job that keeps
-     * draining on an IO thread after a retry already reset the flag.
+     *   draining on an IO thread after a retry already reset the flag.
      */
     private fun beginJob(): Int {
         cancelled = false
         return generation.incrementAndGet()
     }
+
+    /** Scratch file for the in-flight download; never kept after install. */
+    private fun downloadTmpFile(): File = File(context.cacheDir, "alpine-download.tmp")
 
     suspend fun install(
         distro: Distro,
@@ -60,37 +63,26 @@ class AlpineInstaller(private val context: Context) {
     ) = withContext(Dispatchers.IO) {
         val gen = beginJob()
         try {
-            val rootfsDir = getRootfsDir(distro.name)
-            if (rootfsDir.exists()) {
-                deleteRootfsSafe(rootfsDir)
+            val tmp = downloadTmpFile()
+            if (tmp.exists()) tmp.delete()
+            Log.i("AlpineInstaller", "Downloading ${distro.tarballUrl}")
+            // Download and verify before touching any existing rootfs, so a
+            // network failure cannot destroy a working install.
+            val sha = downloadTarball(distro.tarballUrl, tmp, onProgress, gen)
+            checkCancel(gen)
+            if (distro.sha256.isNotEmpty() && sha != distro.sha256.lowercase()) {
+                throw Exception("SHA-256 mismatch: expected ${distro.sha256}, got $sha")
             }
+
+            val rootfsDir = getRootfsDir(distro.name)
+            if (rootfsDir.exists()) FileUtil.deleteTreeWithoutFollowingLinks(rootfsDir)
             rootfsDir.mkdirs()
 
-            val tarball = cachedTarballFile(distro)
-            // Direct download: a failed attempt may have left a truncated file.
-            if (tarball.exists()) tarball.delete()
-            val tarballUrl = distro.tarballUrl
-            Log.i("AlpineInstaller", "Downloading $tarballUrl")
-
-            downloadTarball(tarballUrl, tarball, onProgress, gen)
+            extractTarball(tmp, rootfsDir, onProgress, gen)
             checkCancel(gen)
-
-            val expectedSha = distro.sha256
-            if (expectedSha.isNotEmpty()) {
-                verifyChecksum(tarball, expectedSha)
-            }
-            checkCancel(gen)
-
-            extractTarball(tarball, rootfsDir, onProgress, gen)
-            checkCancel(gen)
-            // Directory permissions are owned by repairRootfs() on first session start.
             saveInstalled(distro.name)
-            // The base tarball exists only to reset without re-downloading;
-            // keeping it doubles disk usage (rootfs + compressed copy). Drop
-            // it once the install is committed: reset falls back to a fresh
-            // download, and the UI no longer exposes a tarball-cache control.
-            if (!tarball.delete() && tarball.exists()) {
-                Log.w("AlpineInstaller", "Could not delete cached tarball ${tarball.name}")
+            if (!tmp.delete() && tmp.exists()) {
+                Log.w("AlpineInstaller", "Could not delete download temp file")
             }
             Log.i("AlpineInstaller", "Install complete for ${distro.name}")
         } catch (e: CancelledException) {
@@ -107,24 +99,7 @@ class AlpineInstaller(private val context: Context) {
         }
     }
 
-    private fun tarballDir(): File =
-        File(context.filesDir, "tarballs").apply { mkdirs() }
-
-    private fun cachedTarballFile(distro: Distro): File =
-        File(tarballDir(), distro.tarballUrl.substringAfterLast('/'))
-
     class CancelledException : Exception("Installation cancelled")
-
-    /**
-     * Deletes a rootfs tree safely:
-     * - runs on Dispatchers.IO regardless of caller,
-     * - never follows symlinks (see [FileUtil]),
-     * - tracks visited canonical paths so symlink cycles cannot loop forever.
-     * Failures are logged, not thrown.
-     */
-    private suspend fun deleteRootfsSafe(dir: File) = withContext(Dispatchers.IO) {
-        if (dir.exists()) FileUtil.deleteTreeWithoutFollowingLinks(dir)
-    }
 
     private fun checkCancel(gen: Int) {
         if (cancelled || generation.get() != gen) throw CancelledException()
@@ -135,25 +110,23 @@ class AlpineInstaller(private val context: Context) {
         // here would race its download/extraction.
         if (generation.get() != gen) return
         // Runs even when this coroutine is being cancelled: a cancelled
-        // install must not leave a half-extracted rootfs behind. Plain
-        // withContext(Dispatchers.IO) would hit the cancellation fast-path
-        // and skip the delete entirely. Each step is best-effort so one
-        // failure cannot block the remaining cleanup.
-        withContext(NonCancellable) {
-            val dir = getRootfsDir(distro.name)
-            runCatching { deleteRootfsSafe(dir) }
-            runCatching { cachedTarballFile(distro).delete() }
+        // install must not leave a half-extracted rootfs behind. Each step is
+        // best-effort so one failure cannot block the remaining cleanup.
+        withContext(NonCancellable + Dispatchers.IO) {
+            runCatching { FileUtil.deleteTreeWithoutFollowingLinks(getRootfsDir(distro.name)) }
+            runCatching { downloadTmpFile().delete() }
             runCatching { installedMarker(distro.name).delete() }
             DocumentsProvider.notifyRootsChanged(context)
         }
     }
 
+    /** Downloads [urlString] to [dest], returning the file's SHA-256 hex digest. */
     private fun downloadTarball(
         urlString: String,
         dest: File,
         onProgress: (Progress) -> Unit,
         gen: Int
-    ) {
+    ): String {
         val conn = URL(urlString).openConnection() as HttpURLConnection
         try {
             conn.connectTimeout = Prefs.CONNECT_TIMEOUT_MS
@@ -171,8 +144,9 @@ class AlpineInstaller(private val context: Context) {
                 requireFreeSpace(total + total * ROOTFS_EXPANSION_FACTOR, "installing ${dest.name}")
             }
 
+            val digest = MessageDigest.getInstance("SHA-256")
             val throttler = ProgressThrottler(PROGRESS_EMIT_INTERVAL_MS)
-            val buffer = ByteArray(8192)
+            val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
             FileOutputStream(dest).use { output ->
                 conn.inputStream.use { input ->
                     var downloaded = 0L
@@ -180,6 +154,7 @@ class AlpineInstaller(private val context: Context) {
                     readBlocks(input, buffer) { read ->
                         checkCancel(gen)
                         output.write(buffer, 0, read)
+                        digest.update(buffer, 0, read)
                         downloaded += read
                         val now = System.currentTimeMillis()
                         val finished = total > 0 && downloaded >= total
@@ -194,20 +169,9 @@ class AlpineInstaller(private val context: Context) {
                     }
                 }
             }
+            return digest.digest().joinToString("") { "%02x".format(it) }
         } finally {
             conn.disconnect()
-        }
-    }
-
-    private fun verifyChecksum(file: File, expectedSha256: String) {
-        val digest = MessageDigest.getInstance("SHA-256")
-        file.inputStream().use { input ->
-            val buffer = ByteArray(8192)
-            readBlocks(input, buffer) { read -> digest.update(buffer, 0, read) }
-        }
-        val actual = digest.digest().joinToString("") { "%02x".format(it) }
-        if (actual != expectedSha256.lowercase()) {
-            throw Exception("SHA-256 mismatch: expected $expectedSha256, got $actual")
         }
     }
 
@@ -224,18 +188,21 @@ class AlpineInstaller(private val context: Context) {
         }
     }
 
-    private suspend fun extractTarball(
-        tarball: File,
-        dest: File,
+    private fun extractTarball(
+        tarball: File, dest: File,
         onProgress: (Progress) -> Unit,
         gen: Int
-    ) = withContext(Dispatchers.IO) {
-        if (!tarball.name.endsWith(".tar.gz", true)) {
-            throw Exception("Unsupported archive format: ${tarball.name}")
+    ) {
+        FileInputStream(tarball).use { fis ->
+            BufferedInputStream(fis, 65536).use { bis ->
+                GzipCompressorInputStream(bis).use { gzIn ->
+                    TarArchiveInputStream(gzIn).use { tarIn ->
+                        extractTarEntries(tarIn, dest, onProgress, gen)
+                    }
+                }
+            }
         }
-        extractWithJavaGz(tarball, dest, onProgress, gen)
     }
-
 
     /** Streams [input] through [buffer], invoking [onBlock] with each read's byte count. */
     private inline fun readBlocks(input: InputStream, buffer: ByteArray, onBlock: (Int) -> Unit) {
@@ -257,26 +224,6 @@ class AlpineInstaller(private val context: Context) {
         }
     }
 
-    private fun extractWithJavaGz(
-        tarball: File, dest: File,
-        onProgress: (Progress) -> Unit,
-        gen: Int
-    ) {
-        try {
-            FileInputStream(tarball).use { fis ->
-                GzipCompressorInputStream(fis).use { gzIn ->
-                    BufferedInputStream(gzIn, 65536).use { bis ->
-                        TarArchiveInputStream(bis).use { tarIn ->
-                            extractTarEntries(tarIn, dest, onProgress, gen)
-                        }
-                    }
-                }
-            }
-        } catch (e: NoClassDefFoundError) {
-            throw Exception("Missing compression library: ${e.message}")
-        }
-    }
-
     private fun extractTarEntries(
         tarIn: TarArchiveInputStream, dest: File,
         onProgress: (Progress) -> Unit,
@@ -284,55 +231,28 @@ class AlpineInstaller(private val context: Context) {
     ) {
         // 8 MB / 515 entries extracts in seconds: an indeterminate bar is enough.
         onProgress(Progress(-1, "Extracting"))
-        val firstEntry = tarIn.getNextEntry()
-        var prefixToStrip = ""
-        if (firstEntry != null) {
-            val name = firstEntry.name
-            val slash = name.indexOf('/')
-            if (slash > 0) {
-                prefixToStrip = name.substring(0, slash + 1)
-                Log.i("AlpineInstaller", "Stripping prefix: $prefixToStrip")
-            }
-        }
         val canonicalDest = dest.canonicalFile
-
-        fun stripPrefix(name: String): String =
-            if (prefixToStrip.isNotEmpty() && name.startsWith(prefixToStrip)) {
-                name.removePrefix(prefixToStrip)
-            } else {
-                name
-            }
+        val buf = ByteArray(65536)
 
         fun processEntry(entry: TarArchiveEntry) {
-            val entryName = stripPrefix(entry.name)
+            // Alpine minirootfs entries start with "./"; strip only that, so a
+            // first entry like "bin/..." can never swallow a real path component.
+            val entryName = entry.name.removePrefix("./")
             // Root-dir marker entries ("./", ".") carry no content and resolve
             // to the destination itself; skip them instead of rejecting them
             // as "unsafe".
-            if (entryName.isEmpty() || entryName == "." || entryName == "./") return
+            if (entryName.isEmpty() || entryName == ".") return
             val target = File(dest, entryName).canonicalFile
             if (target == canonicalDest || !target.isUnder(canonicalDest)) {
                 throw Exception("Unsafe archive entry: ${entry.name}")
             }
             if (entry.isSymbolicLink) {
-                val linkTarget = entry.linkName
+                // The link target is interpreted inside the guest by proot, so
+                // only the entry's own location needs to stay in the rootfs.
                 try {
-                    // Absolute link targets are relative to the *guest* root
-                    // (e.g. bin/arch -> /bin/busybox), not to the host filesystem.
-                    // File.resolve() returns absolute children unchanged, so they
-                    // must be joined under the rootfs manually.
-                    val resolvedTarget = if (linkTarget.startsWith("/")) {
-                        File(canonicalDest, linkTarget.substring(1)).canonicalFile
-                    } else {
-                        target.parentFile?.canonicalFile?.resolve(linkTarget)?.canonicalFile
-                    }
-                    val isSafe = resolvedTarget != null && resolvedTarget.isUnder(canonicalDest)
-                    if (!isSafe) {
-                        Log.w("AlpineInstaller", "Skipping unsafe symlink ${entry.name} -> $linkTarget")
-                    } else {
-                        target.parentFile?.mkdirs()
-                        target.delete()
-                        android.system.Os.symlink(linkTarget, target.absolutePath)
-                    }
+                    target.parentFile?.mkdirs()
+                    target.delete()
+                    android.system.Os.symlink(entry.linkName, target.absolutePath)
                 } catch (e: Exception) {
                     Log.w("AlpineInstaller", "Symlink failed ${entry.name}: ${e.message}")
                 }
@@ -340,8 +260,8 @@ class AlpineInstaller(private val context: Context) {
                 // Hard link: payload lives at linkName, extracted earlier in
                 // this archive. Falling back to a copy keeps the content even
                 // on filesystems where link(2) fails.
-                val linkTarget = stripPrefix(entry.linkName)
-                val source = if (linkTarget.isEmpty()) null else File(dest, linkTarget).canonicalFile
+                val linkName = entry.linkName.removePrefix("./")
+                val source = if (linkName.isEmpty()) null else File(dest, linkName).canonicalFile
                 if (source == null || !source.isUnder(canonicalDest) || !source.isFile) {
                     Log.w("AlpineInstaller", "Skipping hard link ${entry.name} -> ${entry.linkName}")
                 } else {
@@ -349,29 +269,27 @@ class AlpineInstaller(private val context: Context) {
                     target.delete()
                     try {
                         android.system.Os.link(source.absolutePath, target.absolutePath)
-                    } catch (e: Exception) {
+                    } catch (_: Exception) {
                         source.copyTo(target, overwrite = true)
                     }
                 }
             } else if (entry.isDirectory) {
                 target.mkdirs()
+                runCatching { android.system.Os.chmod(target.absolutePath, 0x1ED) } // 0755
             } else {
                 target.parentFile?.mkdirs()
                 FileOutputStream(target).use { out ->
-                    val buf = ByteArray(65536)
                     readBlocks(tarIn, buf) { read ->
                         checkCancel(gen)
                         out.write(buf, 0, read)
                     }
                 }
-                val perm = entry.mode and 0x1FF
-                val isExec = (perm and 0b001001001) != 0
-                target.setReadable(true, false)
-                target.setExecutable(isExec, false)
-                target.setWritable(true, false)
+                // Tar mode bits mapped to read-for-all, write-for-owner,
+                // execute when any execute bit is set.
+                val perm = if ((entry.mode and 0b001001001) != 0) 0x1ED else 0x1A4 // 0755 : 0644
+                runCatching { android.system.Os.chmod(target.absolutePath, perm) }
             }
         }
-        if (firstEntry != null) processEntry(firstEntry)
         var entry: TarArchiveEntry? = tarIn.getNextEntry()
         while (entry != null) {
             checkCancel(gen)
@@ -410,7 +328,7 @@ class AlpineInstaller(private val context: Context) {
         // A symlink (e.g. -> /run/resolvconf/resolv.conf) must be removed
         // first so writeText below cannot follow it out of the rootfs.
         if (FileUtil.isSymlink(resolv)) resolv.delete()
-        safeWriteText(resolv, guestDnsServers.joinToString("") { "nameserver $it\n" })
+        resolv.writeText(guestDnsServers.joinToString("") { "nameserver $it\n" })
     }
 
     private fun ensureSupplementaryGroups(rootfs: File) {
@@ -438,12 +356,12 @@ class AlpineInstaller(private val context: Context) {
         val sb = StringBuilder(existingText)
         if (sb.isNotEmpty() && !sb.endsWith('\n')) sb.append('\n')
         additions.forEach { sb.append(it).append('\n') }
-        safeWriteText(group, sb.toString())
+        group.writeText(sb.toString())
     }
 
     /** Supplementary group IDs of this process, from /proc/self/status. */
     private fun selfGroupIds(): List<Int> = try {
-        java.io.File("/proc/self/status").readLines()
+        File("/proc/self/status").readLines()
             .firstOrNull { it.startsWith("Groups:") }
             ?.removePrefix("Groups:")
             ?.trim()
@@ -455,31 +373,7 @@ class AlpineInstaller(private val context: Context) {
         emptyList()
     }
 
-    private fun ensureWritable(file: File) {
-        if (file.exists()) file.setWritable(true, false)
-        file.parentFile?.let { if (!it.canWrite()) it.setWritable(true, false) }
-    }
-
-    private fun safeWriteText(file: File, text: String) {
-        ensureWritable(file)
-        file.writeText(text)
-    }
-
-    private fun safeAppendText(file: File, text: String) {
-        ensureWritable(file)
-        file.appendText(text)
-    }
-
-    private fun fixupDirectoryPermissions(rootfs: File) {
-        rootfs.walkTopDown().filter { it.isDirectory }.forEach { d ->
-            d.setReadable(true, false)
-            d.setExecutable(true, false)
-            d.setWritable(true, true)
-        }
-    }
-
     fun repairRootfs(rootfs: File): List<RepairLine> = buildList {
-        addAll(repairDirectoryPermissionsOnce(rootfs))
         addAll(repairPasswdEntry(rootfs))
         ensureSupplementaryGroups(rootfs)
         addAll(repairHosts(rootfs))
@@ -493,21 +387,17 @@ class AlpineInstaller(private val context: Context) {
         }
     }
 
-    private fun repairDirectoryPermissionsOnce(rootfs: File): List<RepairLine> {
-        if (File(rootfs, ".perms_fixed").exists()) return emptyList()
-        fixupDirectoryPermissions(rootfs)
-        try {
-            File(rootfs, ".perms_fixed").writeText("1")
-        } catch (_: Exception) {}
-        return listOf(RepairLine("Fixed directory permissions"))
-    }
-
     private fun repairPasswdEntry(rootfs: File): List<RepairLine> {
         val uid = android.os.Process.myUid()
         val passwd = File(rootfs, "etc/passwd")
-        if (passwd.exists() && passwd.readText().contains(":$uid:")) return emptyList()
+        // Match the uid field specifically (name:passwd:uid:gid:...), not any
+        // occurrence of the number in a foreign line.
+        val hasEntry = passwd.exists() && passwd.readLines().any { line ->
+            line.startsWith("root:") && line.split(':').getOrNull(2) == uid.toString()
+        }
+        if (hasEntry) return emptyList()
         passwd.parentFile?.mkdirs()
-        safeAppendText(passwd, "root:x:$uid:0:root:/root:/bin/sh\n")
+        passwd.appendText("root:x:$uid:0:root:/root:/bin/sh\n")
         return listOf(RepairLine("Added passwd entry for uid $uid"))
     }
 
@@ -515,7 +405,7 @@ class AlpineInstaller(private val context: Context) {
         val hosts = File(rootfs, "etc/hosts")
         if (hosts.exists() && hosts.readText().contains("127.0.0.1")) return emptyList()
         hosts.parentFile?.mkdirs()
-        safeWriteText(hosts, "127.0.0.1 localhost\n::1 localhost\n")
+        hosts.writeText("127.0.0.1 localhost\n::1 localhost\n")
         return listOf(RepairLine("Created /etc/hosts"))
     }
 
@@ -580,7 +470,8 @@ class AlpineInstaller(private val context: Context) {
      * - rootfs dirs without an "installed" marker (husk of an interrupted
      *   uninstall) that are at least a day old, so an in-flight install (which
      *   also has no marker yet) is never touched;
-     * - stray download files (truncated tarballs) older than a week.
+     * - leftovers from older versions (tarball cache) and stale download
+     *   temp files older than a week.
      */
     suspend fun sweepOrphanFiles() = withContext(Dispatchers.IO) {
         val dayMs = 24L * 60 * 60 * 1000
@@ -593,25 +484,26 @@ class AlpineInstaller(private val context: Context) {
                 dir.lastModified() < huskCutoff
             ) {
                 Log.i("AlpineInstaller", "Sweeping orphan rootfs ${dir.name}")
-                deleteRootfsSafe(dir)
+                FileUtil.deleteTreeWithoutFollowingLinks(dir)
             }
         }
-        tarballDir().listFiles()?.forEach { f ->
-            if (f.isFile && f.lastModified() < staleCutoff) {
-                Log.i("AlpineInstaller", "Sweeping stale download file ${f.name}")
-                f.delete()
-            }
+        // Legacy tarball cache from versions that kept the downloaded archive.
+        FileUtil.deleteTreeWithoutFollowingLinks(File(context.filesDir, "tarballs"))
+        val tmp = downloadTmpFile()
+        if (tmp.isFile && tmp.lastModified() < staleCutoff) {
+            Log.i("AlpineInstaller", "Sweeping stale download temp file")
+            tmp.delete()
         }
     }
 
     private companion object {
         private const val PROGRESS_EMIT_INTERVAL_MS = 100L
+        private const val DOWNLOAD_BUFFER_BYTES = 65536
 
         /**
          * Room reserved for the extracted rootfs on top of the tarball:
          * gzip-compressed rootfs archives decompress roughly 2:1.
          */
         private const val ROOTFS_EXPANSION_FACTOR = 2L
-
     }
 }

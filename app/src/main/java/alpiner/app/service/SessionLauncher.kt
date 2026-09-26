@@ -9,7 +9,6 @@ import alpiner.app.ui.Prefs
 import alpiner.app.ui.prefs
 import java.io.File
 import java.util.TimeZone
-import java.util.UUID
 
 internal class SessionLauncher(context: Context) {
 
@@ -18,11 +17,13 @@ internal class SessionLauncher(context: Context) {
         val workingDirectory: String,
         val arguments: Array<String>,
         val scrollbackRows: Int,
-        val launchScript: File,
     )
 
     private val context = context.applicationContext
     private val installer = AlpineInstaller(this.context)
+
+    /** Single shared launch script; rewritten atomically on every session start. */
+    private val launchScript = File(context.filesDir, "launch.sh")
 
     fun prepare(): LaunchSpec {
         val rootfsDir = installer.getRootfsDir(AlpineRegistry.alpine.name)
@@ -35,31 +36,38 @@ internal class SessionLauncher(context: Context) {
 
         prepareRuntimeDirectories(rootfsDir)
         writeShellConfigs(rootfsDir)
+        writeLaunchScript(rootfsDir)
 
+        val prefs = context.prefs()
+        val scrollbackIndex = prefs.getInt(Prefs.KEY_SCROLLBACK, Prefs.SCROLLBACK_DEFAULT)
+            .coerceIn(Prefs.SCROLLBACK_ROWS.indices)
+        return LaunchSpec(
+            executable = "/system/bin/sh",
+            workingDirectory = context.filesDir.absolutePath,
+            arguments = arrayOf("-c", launchScript.absolutePath),
+            scrollbackRows = Prefs.SCROLLBACK_ROWS[scrollbackIndex],
+        )
+    }
+
+    private fun writeLaunchScript(rootfsDir: File) {
         val nativeLibDir = context.applicationInfo.nativeLibraryDir
         val prootBin = ProotInstaller.getProotPath(context) ?: "$nativeLibDir/libproot.so"
-        // The proot asset build (tools/build-proot-assets.sh) produces only
-        // the 64-bit loader: this app is arm64-only and never runs 32-bit
-        // guests, so no PROOT_LOADER_32 is exported.
         val prootLoader = "$nativeLibDir/libloader.so"
         val rootfsPath = rootfsDir.absolutePath
-        val sessionId = UUID.randomUUID().toString().replace("-", "").take(Prefs.SESSION_ID_LENGTH)
-        val launchScript = File(context.filesDir, "launch_$sessionId.sh")
         val timezone = TimeZone.getDefault().id
         val extraBinds = optionalHostBinds()
-        launchScript.writeText("""#!/system/bin/sh
+        val script = """#!/system/bin/sh
 export HOME=/root
 export TERM=xterm-256color
 export LANG=C.UTF-8
 export LC_ALL=C.UTF-8
 export TZ="$timezone"
 export TMPDIR=/tmp
-export PATH=/system/bin:/system/xbin:/bin:/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/system/bin:/system/xbin
 export ENV=/root/.startup
 export UV_THREADPOOL_SIZE=${Prefs.UV_THREADPOOL_SIZE}
-export PROOT_LOADER=$prootLoader
-export PROOT_TMP_DIR=$rootfsPath/tmp
-mkdir -p "$rootfsPath/tmp" "$rootfsPath/run/shm"
+export PROOT_LOADER="$prootLoader"
+export PROOT_TMP_DIR="$rootfsPath/tmp"
 ulimit -n ${Prefs.ULIMIT_NOFILE} 2>/dev/null
 ulimit -u ${Prefs.ULIMIT_NPROC} 2>/dev/null
 exec "$prootBin" -0 -L -r "$rootfsPath" -w /root --link2symlink --sysvipc --ashmem-memfd --kill-on-exit \
@@ -74,19 +82,21 @@ exec "$prootBin" -0 -L -r "$rootfsPath" -w /root --link2symlink --sysvipc --ashm
     -b /dev/urandom:/dev/random \
     $extraBinds \
     /bin/sh -i
-""")
+"""
+        // Atomic replace: a running session's shell may still hold the old
+        // script open while a new session rewrites it.
+        val tmp = File(context.filesDir, "launch.sh.tmp")
+        try {
+            tmp.writeText(script)
+            if (!tmp.renameTo(launchScript)) {
+                launchScript.writeText(script)
+                tmp.delete()
+            }
+        } catch (e: Exception) {
+            tmp.delete()
+            throw e
+        }
         launchScript.setExecutable(true, false)
-
-        val prefs = context.prefs()
-        val scrollbackIndex = prefs.getInt(Prefs.KEY_SCROLLBACK, Prefs.SCROLLBACK_DEFAULT)
-            .coerceIn(Prefs.SCROLLBACK_ROWS.indices)
-        return LaunchSpec(
-            executable = "/system/bin/sh",
-            workingDirectory = context.filesDir.absolutePath,
-            arguments = arrayOf("-c", launchScript.absolutePath),
-            scrollbackRows = Prefs.SCROLLBACK_ROWS[scrollbackIndex],
-            launchScript = launchScript,
-        )
     }
 
     private fun prepareRuntimeDirectories(rootfsDir: File) {
@@ -99,10 +109,6 @@ exec "$prootBin" -0 -L -r "$rootfsPath" -w /root --link2symlink --sysvipc --ashm
         File(rootfsDir, "run/shm").mkdirs()
         val busybox = File(rootfsDir, "bin/busybox")
         if (busybox.exists() && !busybox.canExecute()) busybox.setExecutable(true, false)
-        for (name in listOf("sh", "ash", "bash")) {
-            val shell = File(rootfsDir, "bin/$name")
-            if (shell.exists() && !shell.canExecute()) shell.setExecutable(true, false)
-        }
     }
 
     /**
@@ -178,6 +184,9 @@ if [ ! -f /root/.init_done ] || ! has_bash; then
     fi
 fi
 if command -v bash >/dev/null 2>&1; then
+    # ENV points ash at this script; it must not leak into the bash session,
+    # or a later "sh"/"ash" would re-run it and exec bash again.
+    unset ENV
     exec bash -i
 fi
 """
@@ -185,6 +194,13 @@ fi
         if (current != startupScript) {
             startup.writeText(startupScript)
         }
+    }
+
+    /** Removes per-session scripts left behind by older Alpiner versions. */
+    fun deleteLegacyLaunchScripts() {
+        context.filesDir.listFiles { _, name ->
+            name.startsWith("launch_") && name.endsWith(".sh")
+        }?.forEach { it.delete() }
     }
 
     private fun managedBashrcBlock(): String = """$BASHRC_BEGIN

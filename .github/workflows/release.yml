@@ -21,12 +21,10 @@ jobs:
         with:
           java-version: "17"
           distribution: temurin
+          cache: gradle
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
-
-      - name: Install NDK 29 and CMake
-        run: sdkmanager "ndk;29.0.13846066" "cmake;3.22.1"
 
       - name: Require signing secrets
         if: env.HAS_KEY != 'true'
