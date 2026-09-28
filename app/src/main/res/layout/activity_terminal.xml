@@ -1,13 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/root_container"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:fitsSystemWindows="true">
 
     <FrameLayout
-        android:id="@+id/terminal_wrapper"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1">
@@ -18,7 +16,6 @@
             android:layout_height="match_parent">
 
             <FrameLayout
-                android:id="@+id/terminal_bg_layer"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent">
 
@@ -27,35 +24,72 @@
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
                     android:layout_marginStart="3dp"
+                    android:background="@color/terminal_bg"
                     android:focusable="true"
                     android:focusableInTouchMode="true"
                     android:imeOptions="actionNone|flagNoEnterAction" />
 
+                <LinearLayout
+                    android:id="@+id/install_overlay"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="24dp"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:id="@+id/install_title"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:paddingBottom="12dp"
+                        android:textColor="@color/terminal_text"
+                        android:textSize="16sp" />
+
+                    <ProgressBar
+                        android:id="@+id/install_progress"
+                        style="?android:attr/progressBarStyleHorizontal"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:max="100" />
+
+                    <TextView
+                        android:id="@+id/install_status"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:paddingTop="8dp"
+                        android:text="Preparing..."
+                        android:textColor="@color/terminal_text"
+                        android:textSize="14sp" />
+
+                    <Button
+                        android:id="@+id/install_retry"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="16dp"
+                        android:text="Retry"
+                        android:visibility="gone" />
+
+                </LinearLayout>
+
             </FrameLayout>
 
             <LinearLayout
-                android:id="@+id/sessions_panel"
                 android:layout_width="280dp"
                 android:layout_height="match_parent"
                 android:layout_gravity="start"
-                android:orientation="vertical"
-                android:background="?attr/extraKeysBg"
-                android:fitsSystemWindows="true">
+                android:background="@color/extra_keys_bg"
+                android:fitsSystemWindows="true"
+                android:orientation="vertical">
 
-                <LinearLayout
-                    android:layout_width="match_parent"
+                <TextView
+                    android:layout_width="wrap_content"
                     android:layout_height="40dp"
                     android:gravity="center_vertical"
-                    android:paddingHorizontal="12dp">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="\u2630 Sessions"
-                        android:textColor="?attr/terminalText"
-                        android:textSize="13sp"
-                        android:textStyle="bold" />
-                </LinearLayout>
+                    android:paddingHorizontal="12dp"
+                    android:text="\u2630 Sessions"
+                    android:textColor="@color/terminal_text"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
 
                 <ScrollView
                     android:layout_width="match_parent"
@@ -77,12 +111,12 @@
                     android:layout_width="match_parent"
                     android:layout_height="48dp"
                     android:layout_marginTop="4dp"
-                    android:text="+ New Session"
+                    android:background="@color/extra_keys_bg"
                     android:foreground="?attr/selectableItemBackground"
-                    android:textColor="?attr/colorPrimary"
-                    android:textSize="14sp"
                     android:gravity="center"
-                    android:background="?attr/extraKeysBg" />
+                    android:text="+ New Session"
+                    android:textColor="?attr/colorPrimary"
+                    android:textSize="14sp" />
 
             </LinearLayout>
 
@@ -94,8 +128,8 @@
         android:id="@+id/extra_keys_wrapper"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:background="?attr/extraKeysBg">
+        android:background="@color/extra_keys_bg"
+        android:orientation="vertical">
 
         <androidx.viewpager2.widget.ViewPager2
             android:id="@+id/extra_keys_pager"

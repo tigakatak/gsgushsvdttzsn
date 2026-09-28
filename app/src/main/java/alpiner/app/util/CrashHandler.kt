@@ -4,36 +4,29 @@ import android.content.Context
 import android.util.Log
 import java.io.File
 import java.io.FileWriter
-import java.io.Writer
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import java.util.TimeZone
 
 object CrashHandler {
     private const val MAX_LOGS = 10
+    private const val FILE_PREFIX = "crash_"
     private var enabled = false
 
     fun init(context: Context) {
         if (enabled) return
         enabled = true
-        val base = context.getExternalFilesDir(null) ?: context.filesDir
-        val crashDir = File(base, "crash")
+        val crashDir = crashDir(context)
         crashDir.mkdirs()
         pruneOldLogs(crashDir)
         val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            val dateStr = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).apply {
-                timeZone = TimeZone.getDefault()
-            }.format(Date())
-            val file = File(crashDir, "crash_$dateStr.log")
+            val dateStr = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
             try {
-                FileWriter(file).use { writer ->
+                FileWriter(File(crashDir, "$FILE_PREFIX$dateStr.log")).use { writer ->
                     writer.write("Time: $dateStr\n")
-                    writer.write("Thread: ${thread.name}\n")
-                    writer.write("Message: ${throwable.message}\n\n")
-                    writer.write("Stack trace:\n")
-                    writeStackTrace(writer, throwable, 0)
+                    writer.write("Thread: ${thread.name}\n\n")
+                    writer.write(throwable.stackTraceToString())
                 }
             } catch (e: Exception) {
                 Log.e("CrashHandler", "Failed to write crash log", e)
@@ -51,23 +44,18 @@ object CrashHandler {
         }
     }
 
+    /** Where crash logs live, and the newest-first list of them (may be empty). */
+    fun crashDir(context: Context): File = File(context.getExternalFilesDir(null) ?: context.filesDir, "crash")
+
+    fun logFiles(context: Context): List<File> = listLogs(crashDir(context))
+
     /** Keeps only the [MAX_LOGS] newest crash logs so they cannot grow unbounded. */
     private fun pruneOldLogs(crashDir: File) {
-        val logs = crashDir.listFiles { f -> f.name.startsWith("crash_") }
-            ?.sortedByDescending { it.lastModified() }
-            ?: return
-        logs.drop(MAX_LOGS).forEach { it.delete() }
+        listLogs(crashDir).drop(MAX_LOGS).forEach { it.delete() }
     }
 
-    private fun writeStackTrace(writer: Writer, throwable: Throwable, depth: Int) {
-        if (depth > 10) return
-        for (element in throwable.stackTrace) {
-            writer.write("\tat ${element.toString()}\n")
-        }
-        val cause = throwable.cause
-        if (cause != null && cause !== throwable) {
-            writer.write("\nCaused by: $cause\n")
-            writeStackTrace(writer, cause, depth + 1)
-        }
-    }
+    private fun listLogs(crashDir: File): List<File> =
+        crashDir.listFiles { f -> f.name.startsWith(FILE_PREFIX) }
+            ?.sortedByDescending { it.lastModified() }
+            ?: emptyList()
 }

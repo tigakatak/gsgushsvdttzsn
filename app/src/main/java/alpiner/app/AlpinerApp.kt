@@ -12,13 +12,13 @@ import kotlinx.coroutines.SupervisorJob
 
 class AlpinerApp : Application() {
 
-    internal val terminalSessions = SessionStore()
+    internal val sessionStore = SessionStore()
 
-    /** Survives activity recreation: rootfs installs must not restart on config changes. */
-    internal val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    /** Outlives activities: a rootfs install must not restart on config changes. */
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
-    /** One installer instance so cancellation and its generation counter are shared. */
-    internal val alpineInstaller by lazy { AlpineInstaller(this) }
+    /** Single owner of the install job and its state. */
+    internal val alpineInstaller by lazy { AlpineInstaller(this, appScope) }
 
     override fun onCreate() {
         super.onCreate()
@@ -34,19 +34,16 @@ class AlpinerApp : Application() {
                 start()
             }
         }
-        createNotificationChannel()
-    }
 
-    private fun createNotificationChannel() {
         val channel = NotificationChannel(
             CHANNEL_TERMINAL,
             getString(R.string.notification_channel_terminal),
             NotificationManager.IMPORTANCE_LOW
-        ).apply {
-            description = "Notification for running terminal sessions"
-        }
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(channel)
+        ).apply { description = "Notification for running terminal sessions" }
+        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+
+        // Reclaim disk space left by interrupted installs.
+        alpineInstaller.sweepOrphanFiles()
     }
 
     companion object {

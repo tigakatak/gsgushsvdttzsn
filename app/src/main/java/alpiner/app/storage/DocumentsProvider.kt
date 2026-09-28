@@ -10,8 +10,7 @@ import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
 import android.webkit.MimeTypeMap
 import alpiner.app.R
-import alpiner.app.distro.AlpineRegistry
-import alpiner.app.distro.DistroPaths
+import alpiner.app.distro.Alpine
 import alpiner.app.util.FileUtil
 import alpiner.app.util.isUnder
 import java.io.File
@@ -48,7 +47,7 @@ class DocumentsProvider : android.provider.DocumentsProvider() {
 
         /** Notifies SAF clients that the root list or its children changed (install, cleanup). */
         fun notifyRootsChanged(context: Context) {
-            val authority = "${context.packageName}.documents"
+            val authority = authorityOf(context)
             context.contentResolver.notifyChange(
                 DocumentsContract.buildRootsUri(authority),
                 null,
@@ -58,17 +57,18 @@ class DocumentsProvider : android.provider.DocumentsProvider() {
                 null,
             )
         }
+
+        private fun authorityOf(context: Context) = "${context.packageName}.documents"
     }
 
     private val appContext
         get() = requireNotNull(context).applicationContext
 
     private val authority
-        get() = "${appContext.packageName}.documents"
+        get() = authorityOf(appContext)
 
-    /** Never pre-created: TerminalActivity treats this directory's absence as "not installed". */
     private val alpineRoot
-        get() = File(DistroPaths.rootfsParent(appContext), AlpineRegistry.alpine.name)
+        get() = Alpine.rootfsDir(appContext)
 
     override fun onCreate(): Boolean = true
 

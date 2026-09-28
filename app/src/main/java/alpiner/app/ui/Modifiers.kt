@@ -24,6 +24,9 @@ enum class TerminalModifier(val keyMod: Int, val keyCodes: Set<Int>) {
     );
 
     companion object {
+        /** Hardware keycodes of every modifier key. */
+        val ALL_KEY_CODES: Set<Int> = entries.flatMapTo(mutableSetOf()) { it.keyCodes }
+
         /** The modifier shown by an extra-keys button [label], if any. */
         fun forLabel(label: String): TerminalModifier? =
             entries.firstOrNull { it.name == label }
@@ -42,7 +45,6 @@ class ModifierState {
 
     fun any(): Boolean = active.isNotEmpty()
 
-    /** Toggles [modifier]. */
     fun toggle(modifier: TerminalModifier) {
         if (!active.add(modifier)) active.remove(modifier)
     }

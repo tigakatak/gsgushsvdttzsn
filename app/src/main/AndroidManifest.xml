@@ -26,7 +26,6 @@
             android:name=".ui.TerminalActivity"
             android:exported="true"
             android:launchMode="singleTask"
-            android:theme="@style/Theme.AlpinerApp"
             android:configChanges="orientation|screenSize|keyboard|keyboardHidden|uiMode|screenLayout|smallestScreenSize|density"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
@@ -37,9 +36,7 @@
 
         <activity
             android:name=".ui.SettingsActivity"
-            android:exported="false"
-            android:theme="@style/Theme.AlpinerApp" />
-
+            android:exported="false" />
 
         <service
             android:name=".ui.QuickSettingsTile"

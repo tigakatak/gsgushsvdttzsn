@@ -90,13 +90,6 @@ android {
     }
 }
 
-configurations.all {
-    resolutionStrategy {
-        force("androidx.core:core:1.18.0")
-        force("androidx.core:core-ktx:1.18.0")
-    }
-}
-
 dependencies {
     implementation("androidx.core:core-ktx:1.18.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.11.0")

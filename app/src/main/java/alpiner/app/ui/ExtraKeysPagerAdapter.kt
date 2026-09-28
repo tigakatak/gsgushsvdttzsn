@@ -1,7 +1,7 @@
 package alpiner.app.ui
 
-import android.view.Gravity
 import android.view.LayoutInflater
+import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.widget.EditText
@@ -9,67 +9,39 @@ import android.widget.LinearLayout
 import androidx.recyclerview.widget.RecyclerView
 import alpiner.app.R
 
+/** Two swipeable pages under the terminal: the extra-keys rows and a line-input field. */
 class ExtraKeysPagerAdapter(
-    private val activity: TerminalActivity,
-    private val onKeysPageReady: (LinearLayout, LinearLayout) -> Unit,
-    private val onInputPageReady: (EditText) -> Unit
-) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+    private val onKeysPage: (row1: LinearLayout, row2: LinearLayout) -> Unit,
+    private val onSendLine: (String) -> Unit,
+) : RecyclerView.Adapter<ExtraKeysPagerAdapter.PageHolder>() {
 
-    companion object {
-        const val TYPE_KEYS = 0
-        const val TYPE_INPUT = 1
-    }
-
-    override fun getItemViewType(position: Int): Int =
-        if (position == 0) TYPE_KEYS else TYPE_INPUT
+    class PageHolder(view: View) : RecyclerView.ViewHolder(view)
 
     override fun getItemCount(): Int = 2
 
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
-        return when (viewType) {
-            TYPE_KEYS -> {
-                val view = LayoutInflater.from(parent.context)
-                    .inflate(R.layout.extra_keys_page, parent, false)
-                val row1 = view.findViewById<LinearLayout>(R.id.extra_keys_container)
-                val row2 = view.findViewById<LinearLayout>(R.id.extra_keys_container_row2)
-                onKeysPageReady(row1, row2)
-                KeysViewHolder(view)
+    override fun getItemViewType(position: Int): Int = position
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): PageHolder {
+        val inflater = LayoutInflater.from(parent.context)
+        return if (viewType == PAGE_KEYS) {
+            val view = inflater.inflate(R.layout.extra_keys_page, parent, false)
+            onKeysPage(view.findViewById(R.id.extra_keys_row1), view.findViewById(R.id.extra_keys_row2))
+            PageHolder(view)
+        } else {
+            val input = inflater.inflate(R.layout.extra_keys_input, parent, false) as EditText
+            input.setOnEditorActionListener { _, actionId, _ ->
+                if (actionId != EditorInfo.IME_ACTION_DONE) return@setOnEditorActionListener false
+                onSendLine(input.text.toString())
+                input.setText("")
+                true
             }
-            else -> {
-                val editText = EditText(parent.context).apply {
-                    layoutParams = ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT
-                    )
-                    maxLines = 1
-                    isSingleLine = true
-                    imeOptions = EditorInfo.IME_ACTION_DONE
-                    background = null
-                    setPadding(
-                        activity.dp(12), 0,
-                        activity.dp(12), 0
-                    )
-                    gravity = Gravity.CENTER_VERTICAL
-                    hint = "Type and press Enter to send"
-                    setTextColor(activity.terminalTextColor())
-                    setHintTextColor(activity.hintColor())
-                    textSize = 14f
-                    setOnEditorActionListener { _, actionId, _ ->
-                        if (actionId == EditorInfo.IME_ACTION_DONE) {
-                            activity.sendInputLine(text.toString())
-                            setText("")
-                            true
-                        } else false
-                    }
-                }
-                onInputPageReady(editText)
-                InputViewHolder(editText)
-            }
+            PageHolder(input)
         }
     }
 
-    override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {}
+    override fun onBindViewHolder(holder: PageHolder, position: Int) {}
 
-    class KeysViewHolder(view: android.view.View) : RecyclerView.ViewHolder(view)
-    class InputViewHolder(view: EditText) : RecyclerView.ViewHolder(view)
+    private companion object {
+        const val PAGE_KEYS = 0
+    }
 }

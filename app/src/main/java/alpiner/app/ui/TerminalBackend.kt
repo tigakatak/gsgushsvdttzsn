@@ -7,116 +7,65 @@ import android.view.MotionEvent
 import android.view.inputmethod.InputMethodManager
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
-import alpiner.app.util.Clipboard
+import alpiner.app.Prefs
+import alpiner.app.prefs
 import com.termux.terminal.TerminalSession
-import com.termux.terminal.TerminalSessionClient
 import com.termux.view.TerminalView
 import com.termux.view.TerminalViewClient
 import kotlin.math.roundToInt
 
+/** TerminalView callbacks: pinch-zoom font size, tap-to-show-IME and sticky modifiers. */
 class TerminalBackend(
-    val view: TerminalView,
-    context: Context,
-    private val modifiers: ModifierState
-) : TerminalSessionClient, TerminalViewClient {
+    private val view: TerminalView,
+    private val modifiers: ModifierState,
+    private val onModifierConsumed: () -> Unit,
+    private val onEmulatorReady: () -> Unit,
+) : TerminalViewClient {
 
-    private val context = context.applicationContext
+    private val context: Context = view.context.applicationContext
 
-    /**
-     * Font size in dp (what the user configures); converted to pixels with
-     * the current density for the renderer.
-     */
-    private var fontSizeDp = Prefs.FONT_SIZE_DEFAULT.toFloat()
+    /** Font size in dp (what the user configures); scaled by density for the renderer. */
+    private var fontSizeDp = 0f
 
     init {
         applyFontSize()
     }
 
-    var onSessionFinished: ((TerminalSession) -> Unit)? = null
-    var onModifierConsumed: (() -> Unit)? = null
-    var onEmulatorReady: (() -> Unit)? = null
-
-    override fun onTextChanged(session: TerminalSession) {
-        view.onScreenUpdated()
+    /** Re-reads the font size preference (settings change, resume). */
+    fun applyFontSize() {
+        fontSizeDp = context.prefs.fontSizeDp.toFloat()
+        applyTextSize()
     }
 
-    override fun onTitleChanged(session: TerminalSession) {}
-
-    override fun onSessionFinished(session: TerminalSession) {
-        view.post { onSessionFinished?.invoke(session) }
+    private fun applyTextSize() {
+        view.setTextSize((fontSizeDp * context.resources.displayMetrics.density).roundToInt())
     }
 
-    override fun onCopyTextToClipboard(session: TerminalSession, text: String) {
-        Clipboard.copy(context, text)
-    }
-
-    override fun onPasteTextFromClipboard(session: TerminalSession?) {
-        Clipboard.primaryText(context)?.let { text -> view.mEmulator?.paste(text) }
-    }
-
-    override fun onBell(session: TerminalSession) {}
-
-    override fun onColorsChanged(session: TerminalSession) {}
-
-    override fun onTerminalCursorStateChange(state: Boolean) {}
-
-    override fun getTerminalCursorStyle(): Int? = null
+    // Persist once, after the pinch gesture settles, not on every scale event.
+    private val saveFontSize = Runnable { context.prefs.fontSizeDp = fontSizeDp.roundToInt() }
 
     override fun onScale(scale: Float): Float {
-        fontSizeDp = (fontSizeDp * scale).coerceIn(Prefs.FONT_SIZE_MIN.toFloat(), Prefs.FONT_SIZE_MAX.toFloat())
+        fontSizeDp = (fontSizeDp * scale).coerceIn(
+            Prefs.FONT_SIZE_MIN.toFloat(),
+            Prefs.FONT_SIZE_MAX.toFloat(),
+        )
         applyTextSize()
-        // Persist once, after the pinch gesture settles, instead of writing
-        // the preference on every scale event.
-        view.removeCallbacks(saveFontSizeRunnable)
-        view.postDelayed(saveFontSizeRunnable, 300L)
+        view.removeCallbacks(saveFontSize)
+        view.postDelayed(saveFontSize, 300L)
         return 1f
-    }
-
-    private val saveFontSizeRunnable = Runnable {
-        context.prefs().edit().putInt(Prefs.KEY_FONT_SIZE_DP, fontSizeDp.roundToInt()).apply()
-    }
-
-    /** Re-reads the preference (settings change, resume). */
-    fun applyFontSize() {
-        fontSizeDp = Prefs.fontSizeDp(context).toFloat()
-        applyTextSize()
-    }
-
-    /** Applies the current [fontSizeDp] to the renderer without re-reading prefs. */
-    private fun applyTextSize() {
-        val px = (fontSizeDp * context.resources.displayMetrics.density).roundToInt()
-        view.setTextSize(px)
     }
 
     override fun onSingleTapUp(e: MotionEvent) {
         view.requestFocus()
         view.post {
-            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-            if (imm == null) return@post
             val imeVisible = ViewCompat.getRootWindowInsets(view)
                 ?.isVisible(WindowInsetsCompat.Type.ime()) == true
             if (!imeVisible) {
-                imm.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
+                context.getSystemService(InputMethodManager::class.java)
+                    ?.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
             }
         }
     }
-
-    override fun shouldBackButtonBeMappedToEscape(): Boolean = false
-
-    override fun shouldEnforceCharBasedInput(): Boolean = true
-    override fun shouldUseCtrlSpaceWorkaround(): Boolean = true
-    override fun isTerminalViewSelected(): Boolean = true
-    override fun copyModeChanged(copyMode: Boolean) {}
-
-    override fun onKeyDown(keyCode: Int, e: KeyEvent, session: TerminalSession): Boolean {
-        // F1-F12 (with modifiers) are already mapped by KeyHandler via
-        // handleKeyCode(); claiming them here would drop Shift/Ctrl+F-keys.
-        return false
-    }
-
-    override fun onKeyUp(keyCode: Int, e: KeyEvent): Boolean = false
-
-    override fun onLongPress(event: MotionEvent): Boolean = false
 
     override fun readControlKey(): Boolean = modifiers.isActive(TerminalModifier.CTRL)
     override fun readAltKey(): Boolean = modifiers.isActive(TerminalModifier.ALT)
@@ -124,21 +73,26 @@ class TerminalBackend(
     override fun readFnKey(): Boolean = false
 
     override fun onCodePoint(codePoint: Int, ctrlDown: Boolean, session: TerminalSession): Boolean {
-        if (modifiers.any()) {
-            view.post { onModifierConsumed?.invoke() }
-        }
+        if (modifiers.any()) view.post { onModifierConsumed() }
         return false
     }
 
-    override fun onEmulatorSet() {
-        onEmulatorReady?.invoke()
-    }
+    override fun onEmulatorSet() = onEmulatorReady()
+
+    // F1-F12 (with modifiers) are already mapped by KeyHandler via
+    // handleKeyCode(); claiming keys here would drop Shift/Ctrl+F-keys.
+    override fun onKeyDown(keyCode: Int, e: KeyEvent, session: TerminalSession): Boolean = false
+    override fun onKeyUp(keyCode: Int, e: KeyEvent): Boolean = false
+    override fun onLongPress(event: MotionEvent): Boolean = false
+
+    override fun shouldBackButtonBeMappedToEscape(): Boolean = false
+    override fun shouldEnforceCharBasedInput(): Boolean = true
+    override fun shouldUseCtrlSpaceWorkaround(): Boolean = true
+    override fun isTerminalViewSelected(): Boolean = true
+    override fun copyModeChanged(copyMode: Boolean) {}
 
     override fun logError(tag: String, message: String) { Log.e(tag, message) }
-    override fun logWarn(tag: String, message: String) { Log.w(tag, message) }
     override fun logInfo(tag: String, message: String) { Log.i(tag, message) }
-    override fun logDebug(tag: String, message: String) { Log.d(tag, message) }
     override fun logVerbose(tag: String, message: String) { Log.v(tag, message) }
     override fun logStackTraceWithMessage(tag: String, message: String, e: Exception) { Log.e(tag, message, e) }
-    override fun logStackTrace(tag: String, e: Exception) { Log.e(tag, "stacktrace", e) }
 }

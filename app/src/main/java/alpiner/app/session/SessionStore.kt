@@ -2,95 +2,76 @@ package alpiner.app.session
 
 import android.content.Context
 import alpiner.app.AlpinerApp
-import alpiner.app.service.SessionBridge
 import com.termux.terminal.TerminalSession
-import com.termux.terminal.TerminalSessionClient
+import com.termux.view.TerminalView
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import java.util.IdentityHashMap
 
+/**
+ * App-wide list of live sessions. Every mutation happens on the main thread
+ * (service coroutines, activity callbacks and session callbacks all run
+ * there), so no locking is needed.
+ */
 internal class SessionStore {
 
     /**
-     * The session list and the selected index as one atomic value: collectors
-     * can never observe a stale index paired with a fresh list (which the
-     * previous two-StateFlow design allowed while they emitted out of step).
+     * The session list and the selected index as one atomic value, so
+     * collectors never see a stale index paired with a fresh list.
      */
     data class State(
         val sessions: List<TerminalSession> = emptyList(),
         val currentIndex: Int = -1,
-    )
+    ) {
+        val current: TerminalSession? get() = sessions.getOrNull(currentIndex)
+    }
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
 
-    /**
-     * Synchronous snapshots for one-off reads; mutations happen on the main
-     * thread, so these never tear mid-callback.
-     */
     val sessions: List<TerminalSession> get() = _state.value.sessions
     val currentIndex: Int get() = _state.value.currentIndex
+    val current: TerminalSession? get() = _state.value.current
+
+    /** The visible terminal view; sessions redraw it when they print. */
+    var terminalView: TerminalView? = null
 
     private val _exitSignal = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val exitSignal: SharedFlow<Unit> = _exitSignal.asSharedFlow()
 
-    private val sessionClients = IdentityHashMap<TerminalSession, SessionBridge>()
     private var sessionCounter = 0
 
-    internal fun addSession(
-        session: TerminalSession,
-        clientBridge: SessionBridge,
-    ) {
-        synchronized(this) {
-            sessionClients[session] = clientBridge
-            // Default names number sessions 1, 2, 3, ... monotonically; a
-            // name is only left alone when the user renamed it.
-            if (session.mSessionName.isNullOrEmpty()) {
-                session.mSessionName = "session ${++sessionCounter}"
-            }
-            _state.value = _state.value.copy(sessions = _state.value.sessions + session)
+    /** Adds [session] and makes it the current one. */
+    fun add(session: TerminalSession) {
+        // Default names number sessions 1, 2, 3, ... monotonically.
+        if (session.mSessionName.isNullOrEmpty()) {
+            session.mSessionName = "session ${++sessionCounter}"
         }
+        val sessions = _state.value.sessions + session
+        _state.value = State(sessions, sessions.lastIndex)
     }
 
-    fun attachClient(session: TerminalSession, client: TerminalSessionClient) = synchronized(this) {
-        sessionClients[session]?.attach(client)
+    fun switchTo(index: Int) {
+        val old = _state.value
+        if (index in old.sessions.indices) _state.value = old.copy(currentIndex = index)
     }
 
-    fun detachClient(client: TerminalSessionClient) = synchronized(this) {
-        sessionClients.values.forEach { it.detach(client) }
+    /** Closes the session at [index] (user action): kills it and drops it. */
+    fun close(index: Int) {
+        val session = sessions.getOrNull(index) ?: return
+        remove(session)
+        session.finishIfRunning()
     }
 
-    fun removeSession(index: Int) {
-        synchronized(this) {
-            val current = _state.value.sessions
-            if (index !in current.indices) return
-            val removed = current[index]
-            removeFromStateLocked(removed)
-            removed.finishIfRunning()
-        }
-    }
-
-    internal fun sessionFinished(session: TerminalSession) {
-        synchronized(this) {
-            removeFromStateLocked(session)
-        }
-    }
-
-    /**
-     * Removes [session] from the state and fixes up the current index.
-     * Caller must hold the monitor. Does not finish the session itself:
-     * [removeSession] does, [sessionFinished] must not.
-     */
-    private fun removeFromStateLocked(session: TerminalSession) {
+    /** Drops [session] after its process exited on its own. */
+    fun remove(session: TerminalSession) {
         val old = _state.value
         val index = old.sessions.indexOf(session)
         if (index < 0) return
-        sessionClients.remove(session)?.detachAll()
-        val sessions = old.sessions.toMutableList().apply { removeAt(index) }
+        val sessions = old.sessions - session
         val currentIndex = when {
             old.currentIndex >= sessions.size -> sessions.size - 1
             index < old.currentIndex -> old.currentIndex - 1
@@ -101,24 +82,11 @@ internal class SessionStore {
         if (sessions.isEmpty()) sessionCounter = 0
     }
 
-    fun finishAllSessions() {
-        synchronized(this) {
-            val active = _state.value.sessions
-            _state.value = State()
-            sessionClients.values.forEach { it.detachAll() }
-            sessionClients.clear()
-            active.forEach { it.finishIfRunning() }
-            sessionCounter = 0
-        }
-    }
-
-    fun switchToSession(session: TerminalSession) {
-        synchronized(this) {
-            val idx = _state.value.sessions.indexOf(session)
-            if (idx >= 0) {
-                _state.value = _state.value.copy(currentIndex = idx)
-            }
-        }
+    fun finishAll() {
+        val active = sessions
+        _state.value = State()
+        sessionCounter = 0
+        active.forEach { it.finishIfRunning() }
     }
 
     fun signalExit() {
@@ -127,4 +95,4 @@ internal class SessionStore {
 }
 
 internal val Context.sessionStore: SessionStore
-    get() = (applicationContext as AlpinerApp).terminalSessions
+    get() = (applicationContext as AlpinerApp).sessionStore
