@@ -280,17 +280,16 @@ class TerminalActivity : AppCompatActivity() {
 
     private fun buildSessionCard(i: Int): MaterialCardView {
         val isCurrent = i == sessionStore.currentIndex
-        return layoutInflater.inflate(R.layout.item_session, sessionListContainer, false) as MaterialCardView
-            .apply {
-                setCardBackgroundColor(if (isCurrent) palette.extraKeysBg else 0)
-                findViewById<TextView>(R.id.session_name).text = sessionStore.sessions[i].mSessionName
-                findViewById<View>(R.id.session_dot).setBackgroundResource(
-                    if (isCurrent) R.drawable.session_dot_active else R.drawable.session_dot_inactive
-                )
-                setOnClickListener { switchToSession(i); hideSessionsPanel() }
-                setOnLongClickListener { showRenameSessionDialog(i); true }
-                findViewById<View>(R.id.session_close).setOnClickListener { closeSession(i) }
-            }
+        val card = layoutInflater.inflate(R.layout.item_session, sessionListContainer, false) as MaterialCardView
+        card.setCardBackgroundColor(if (isCurrent) palette.extraKeysBg else 0)
+        card.findViewById<TextView>(R.id.session_name).text = sessionStore.sessions[i].mSessionName
+        card.findViewById<View>(R.id.session_dot).setBackgroundResource(
+            if (isCurrent) R.drawable.session_dot_active else R.drawable.session_dot_inactive
+        )
+        card.setOnClickListener { switchToSession(i); hideSessionsPanel() }
+        card.setOnLongClickListener { showRenameSessionDialog(i); true }
+        card.findViewById<View>(R.id.session_close).setOnClickListener { closeSession(i) }
+        return card
     }
 
     private fun showRenameSessionDialog(index: Int) {
