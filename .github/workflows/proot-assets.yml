@@ -1,10 +1,5 @@
 name: Proot assets
 
-# Rebuilds the prebuilt proot binaries committed under
-# app/src/main/jniLibs/arm64-v8a/. The script produces libproot.so and
-# libloader.so only (arm64-only app: no 32-bit loader is built, so no
-# PROOT_LOADER_32 is exported at runtime either).
-
 on:
   workflow_dispatch:
 
