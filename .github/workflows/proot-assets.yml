@@ -3,6 +3,9 @@ name: Proot assets
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -24,6 +27,18 @@ jobs:
         run: |
           file app/src/main/jniLibs/arm64-v8a/libproot.so | tee /dev/stderr | grep -q aarch64
           file app/src/main/jniLibs/arm64-v8a/libloader.so | tee /dev/stderr | grep -q aarch64
+
+      - name: Commit built assets to jniLibs
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/jniLibs/arm64-v8a/libproot.so app/src/main/jniLibs/arm64-v8a/libloader.so
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore(ci): update proot assets [skip ci]"
+            git push origin HEAD:${GITHUB_REF_NAME}
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
