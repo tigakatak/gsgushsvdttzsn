@@ -7,11 +7,6 @@ name: Proot assets
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main, Testing]
-    paths:
-      - tools/**
-      - .github/workflows/proot-assets.yml
 
 jobs:
   build:
